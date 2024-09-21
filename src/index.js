@@ -224,12 +224,18 @@ async function drawGraph() {
 
 // Update the renderGraph function
 function renderGraph(dataPoints, dependentVariable) {
-  const ctx = document.getElementById('graph-canvas').getContext('2d');
+  const graphContainer = document.getElementById('graph-container');
+  const graphCanvas = document.getElementById('graph-canvas');
+  
+  // Show the graph container
+  graphContainer.style.display = 'block';
+
+  // Destroy existing chart if it exists
   if (window.graphChart) {
     window.graphChart.destroy();
   }
 
-  window.graphChart = new Chart(ctx, {
+  window.graphChart = new Chart(graphCanvas, {
     type: 'line',
     data: {
       datasets: [{
@@ -242,6 +248,8 @@ function renderGraph(dataPoints, dependentVariable) {
       }]
     },
     options: {
+      responsive: true,
+      maintainAspectRatio: false,
       scales: {
         x: {
           type: 'linear',
@@ -303,6 +311,9 @@ async function extractEquation() {
 
       // Store the equation data for later use
       window.extractedEquationData = { equation, dependentVariable, scope, ranges };
+
+      // Draw the graph immediately after extraction
+      await drawGraph();
     } else {
       alert(`Error: ${data.message}`);
     }
