@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Model Selector Test</title>
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    #container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    #whiteboard {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .ui-element {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.8);
+      padding: 10px;
+      border-radius: 5px;
+    }
+    .ui-element button {
+      margin-right: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <canvas id="whiteboard"></canvas>
+    <div class="ui-element">
+      <button id="start-record-btn">Start Voice Recognition</button>
+      <button id="extract-eq-btn">Extract Equation</button>
+      <p id="status"></p>
+    </div>
+  </div>
+  
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      console.log('DOM fully loaded');
+      
+      // Create model selection dropdown
+      const uiElement = document.querySelector('.ui-element');
+      
+      if (!uiElement) {
+        console.error('UI element not found');
+        return;
+      }
+      
+      const modelSelectContainer = document.createElement('div');
+      modelSelectContainer.style.marginTop = '10px';
+      
+      const modelSelectLabel = document.createElement('label');
+      modelSelectLabel.textContent = 'AI Model: ';
+      modelSelectLabel.setAttribute('for', 'model-select');
+      
+      const modelSelect = document.createElement('select');
+      modelSelect.id = 'model-select';
+      
+      const options = [
+        { value: 'math', text: 'Math.js (Simple)' },
+        { value: 'gpt', text: 'GPT (Advanced)' },
+        { value: 'gemini', text: 'Gemini (Advanced)' }
+      ];
+      
+      options.forEach(option => {
+        const optionElement = document.createElement('option');
+        optionElement.value = option.value;
+        optionElement.textContent = option.text;
+        modelSelect.appendChild(optionElement);
+      });
+      
+      modelSelectContainer.appendChild(modelSelectLabel);
+      modelSelectContainer.appendChild(modelSelect);
+      uiElement.appendChild(modelSelectContainer);
+      
+      console.log('Model selector added');
+    });
+  </script>
+</body>
+</html> 
