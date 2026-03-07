@@ -1,7 +1,5 @@
 // server.js
-require('dotenv').config(); // Load environment variables from .env
-console.log('OpenAI API Key:', process.env.OPENAI_API_KEY);
-console.log('Gemini API Key:', process.env.GEMINI_API_KEY);
+require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const math = require('mathjs');
