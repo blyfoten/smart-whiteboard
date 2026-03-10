@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Smart Whiteboard</title>
   <style>
     body, html {
@@ -23,31 +24,35 @@
       width: 100%;
       height: 100%;
     }
-    #graph-container {
-      position: absolute;
-      bottom: 20px;
-      right: 20px;
-      width: 400px;
-      height: 300px;
-      background: white;
-      border: 1px solid #ccc;
-      z-index: 10;
-      display: none;
-    }
+    /* graph rendered as fabric object on canvas */
     .ui-element {
       position: absolute;
-      top: 20px;
-      left: 20px;
+      top: 0;
+      left: 0;
+      right: 0;
       z-index: 10;
-      background: rgba(255, 255, 255, 0.8);
-      padding: 10px;
-      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     .ui-element button {
-      margin-right: 10px;
+      margin: 0;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+    .ui-element p#status {
+      margin: 0;
+      font-size: 12px;
     }
     #model-select-container {
-      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 13px;
     }
     button {
       padding: 5px 10px;
@@ -60,34 +65,41 @@
       background-color: #e0e0e0;
     }
     #test-section {
-      margin-top: 10px;
-      padding-top: 5px;
-      border-top: 1px solid #ccc;
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
     #test-equation {
-      width: 150px;
+      width: 120px;
       padding: 5px;
-      margin-right: 5px;
+      font-size: 13px;
     }
-    /* New Output Panel Styles */
+    #whiteboard {
+      touch-action: none;
+    }
+    /* Output Panel - collapsible on mobile */
     #output-panel {
       position: absolute;
-      top: 20px;
-      right: 20px;
+      bottom: 0;
+      right: 0;
       width: 350px;
-      max-height: 80vh;
+      max-height: 40vh;
       background: rgba(255, 255, 255, 0.95);
       border: 1px solid #ccc;
-      border-radius: 5px;
+      border-radius: 5px 5px 0 0;
       padding: 10px;
       z-index: 100;
       overflow-y: auto;
-      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+      transition: transform 0.3s ease;
+    }
+    #output-panel.collapsed {
+      transform: translateY(calc(100% - 36px));
     }
     #output-content {
       white-space: pre-wrap;
       font-family: 'Consolas', monospace;
-      font-size: 14px;
+      font-size: 13px;
       line-height: 1.4;
     }
     .output-title {
@@ -98,6 +110,36 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      cursor: pointer;
+    }
+
+    /* Mobile overrides */
+    @media (max-width: 768px) {
+      .ui-element {
+        font-size: 12px;
+        padding: 6px;
+        gap: 3px;
+      }
+      .ui-element button {
+        padding: 4px 6px;
+        font-size: 11px;
+      }
+      #output-panel {
+        width: 100%;
+        right: 0;
+        left: 0;
+        max-height: 35vh;
+        border-radius: 8px 8px 0 0;
+      }
+      #graph-container {
+        width: 90vw !important;
+        height: 200px !important;
+        bottom: 10px !important;
+        right: 5vw !important;
+      }
+      #debug-output {
+        display: none;
+      }
     }
     .result-block {
       margin-bottom: 10px;
@@ -122,15 +164,15 @@
 <body>
   <div id="container">
     <canvas id="whiteboard"></canvas>
-    <div id="graph-container">
-      <canvas id="graph-canvas"></canvas>
-    </div>
+    <!-- graph is now rendered as fabric object on canvas -->
     <div class="ui-element">
       <button id="start-record-btn">Start Voice Recognition</button>
       <button id="extract-eq-btn">Extract Equation</button>
       <button id="solve-eq-btn">Solve Equation</button>
       <button id="graph-btn">Draw Graph</button>
+      <button id="undo-btn">Undo</button>
       <button id="clear-btn">Clear Canvas</button>
+      <button id="save-btn">Save PNG</button>
       <p id="status"></p>
       <div id="model-select-container">
         <label for="model-select">AI Model: </label>
@@ -197,13 +239,11 @@
       debugOutput.textContent = 'Clear button clicked';
       console.log('Clear button clicked');
       
-      // Try to clear the canvas
       if (window.canvas) {
         window.canvas.clear();
-        window.canvas.setBackgroundColor('white', window.canvas.renderAll.bind(window.canvas));
-      } else if (window.canvasInstance) {
-        window.canvasInstance.clear();
-        window.canvasInstance.setBackgroundColor('white', window.canvasInstance.renderAll.bind(window.canvasInstance));
+        window.canvas.backgroundColor = 'white';
+        window.canvas.requestRenderAll();
+        window.extractedEquationData = null;
       } else {
         alert('Canvas not found!');
       }
@@ -242,9 +282,19 @@
     });
     
     // Set up output panel clear button
-    document.getElementById('clear-output').addEventListener('click', function() {
+    document.getElementById('clear-output').addEventListener('click', function(e) {
+      e.stopPropagation();
       document.getElementById('output-content').innerHTML = 'Output cleared.';
     });
+
+    // Toggle output panel on mobile
+    document.querySelector('.output-title').addEventListener('click', function() {
+      document.getElementById('output-panel').classList.toggle('collapsed');
+    });
+    // Start collapsed on mobile
+    if (window.innerWidth <= 768) {
+      document.getElementById('output-panel').classList.add('collapsed');
+    }
     
     // Add a global function to append to the output panel
     window.appendToOutput = function(content, isError = false) {

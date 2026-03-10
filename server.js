@@ -399,8 +399,10 @@ app.post('/graph', (req, res) => {
 });
 
 // Start the server with port fallback
+const HOST = process.env.HOST || '0.0.0.0';
+
 function startServer(port) {
-    app.listen(port)
+    app.listen(port, HOST)
         .on('error', (err) => {
             if (err.code === 'EADDRINUSE') {
                 console.log(`Port ${port} is already in use, trying port ${port + 1}...`);
@@ -410,7 +412,7 @@ function startServer(port) {
             }
         })
         .on('listening', () => {
-            console.log(`Server running on http://localhost:${port}`);
+            console.log(`Server running on http://${HOST}:${port}`);
         });
 }
 

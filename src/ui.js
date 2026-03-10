@@ -1,6 +1,6 @@
 // src/ui.js — event listeners, model selection, output panel
 
-import { getCanvas } from './canvas.js';
+import { getCanvas, undoLast, saveScreenshot, clearCanvas } from './canvas.js';
 import { IText } from 'fabric';
 import { solveEquation, solveEquationFromText, extractEquation, drawGraph } from './api.js';
 import { toggleRecognition } from './speech.js';
@@ -92,6 +92,16 @@ export function initializeEventListeners() {
   const extractEqBtn = document.getElementById('extract-eq-btn');
   if (extractEqBtn) {
     extractEqBtn.addEventListener('click', extractEquation);
+  }
+
+  const undoBtn = document.getElementById('undo-btn');
+  if (undoBtn) {
+    undoBtn.addEventListener('click', () => undoLast(getCanvas()));
+  }
+
+  const saveBtn = document.getElementById('save-btn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => saveScreenshot(getCanvas()));
   }
 
   const uiElement = document.querySelector('.ui-element');
