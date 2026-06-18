@@ -64,6 +64,14 @@
     button:hover {
       background-color: #e0e0e0;
     }
+    #mode-group { display: flex; gap: 4px; padding-right: 6px; border-right: 1px solid #ddd; margin-right: 2px; }
+    .mode-btn.active {
+      background-color: #4a90d9;
+      color: #fff;
+      border-color: #3a7bc8;
+    }
+    .mode-btn.active:hover { background-color: #3a7bc8; }
+    #smart-shapes-container { display: flex; align-items: center; gap: 4px; font-size: 13px; }
     #test-section {
       display: flex;
       align-items: center;
@@ -166,6 +174,11 @@
     <canvas id="whiteboard"></canvas>
     <!-- graph is now rendered as fabric object on canvas -->
     <div class="ui-element">
+      <div id="mode-group">
+        <button id="mode-draw" class="mode-btn active" title="Freehand drawing">✏️ Draw</button>
+        <button id="mode-select" class="mode-btn" title="Select & move (or hold Space)">⬚ Select</button>
+        <button id="mode-shapes" class="mode-btn" title="Draw shapes that snap clean">◇ Shapes</button>
+      </div>
       <button id="start-record-btn">Start Voice Recognition</button>
       <button id="extract-eq-btn">Extract Equation</button>
       <button id="solve-eq-btn">Solve Equation</button>
@@ -180,6 +193,14 @@
           <option value="math">Math.js (Simple)</option>
           <option value="gpt">GPT (Advanced)</option>
           <option value="gemini">Gemini (Advanced)</option>
+        </select>
+      </div>
+      <div id="smart-shapes-container">
+        <label for="smart-shapes-select">Smart shapes:</label>
+        <select id="smart-shapes-select">
+          <option value="off">Off</option>
+          <option value="manual" selected>Manual (Shapes mode)</option>
+          <option value="auto">Auto</option>
         </select>
       </div>
       <div id="test-section">

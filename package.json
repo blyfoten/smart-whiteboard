@@ -7,7 +7,8 @@
     "build": "webpack",
     "start": "node server.js",
     "dev": "webpack --watch & node server.js",
-    "build:prod": "webpack --mode production"
+    "build:prod": "webpack --mode production",
+    "test": "node --no-warnings test/shape-classifier.test.mjs"
   },
   "keywords": [],
   "author": "",

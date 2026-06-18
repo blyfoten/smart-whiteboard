@@ -3,6 +3,7 @@
 import { getCanvas, resizeCanvas, addReadyIndicator } from './canvas.js';
 import { initializeSpeechRecognition } from './speech.js';
 import { initializeModelSelectionUI, setupCanvasEventListeners, initializeEventListeners } from './ui.js';
+import { initModes } from './modes.js';
 import { solveEquation } from './api.js';
 
 function handleCommand(command) {
@@ -25,6 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('resize', () => resizeCanvas(canvas));
     addReadyIndicator(canvas);
     setupCanvasEventListeners();
+    initModes(canvas);
   } else {
     console.error('Failed to initialize canvas');
   }

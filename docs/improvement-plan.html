@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.2)</title>
+<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.4)</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -101,11 +101,11 @@
 
   <header class="hero">
     <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
-    <div class="sub">Draft v0.3 · 2026-06-18 · interactive-canvas features &amp; a synchronized audio+video voice mode, plus the AI-model modernization</div>
+    <div class="sub">Draft v0.4 · 2026-06-18 · §1 (smart shapes + selection) now implemented; voice mode &amp; AI modernization still ahead</div>
     <div class="draft-note">
-      🛠️ <strong>Living sketch — iterate freely.</strong> v0.3 refines the voice mode (§2) into a single Gemini Live session
-      that streams the whiteboard as live video <em>in sync</em> with mic audio. v0.2 added the two feature workstreams
-      (smart shapes + selection, and the voice mode) ahead of the original modernization items.
+      🛠️ <strong>Living sketch — iterate freely.</strong> v0.4: <strong>§1 smart shapes + selection is built &amp; on this branch</strong>
+      (Draw/Select/Shapes modes, Fabric-native transforms, a tested line/arrow/rect/ellipse recognizer, and the
+      Off/Manual/Auto setting). Next up: §3.1 (unbreak the dead Gemini path), then the voice mode (§2).
       <span class="badge decided" style="margin-left:4px">green = decided</span>
       <span class="badge open">amber = open question</span>
     </div>
@@ -127,10 +127,16 @@
     vector <code>Path</code> — the canvas is just locked in drawing mode. Most of this is unlocking + a shape classifier,
     not a new engine.
   </p>
+  <div class="qbox" style="border-left-color:var(--green); background:rgba(74,222,128,0.07)">
+    ✅ <strong>Implemented on this branch.</strong> New modules <code>src/shape-classifier.js</code> (pure geometry,
+    unit-tested) + <code>src/shapes.js</code> (Fabric builders) + <code>src/modes.js</code> (modes, toolbar, Space-to-select,
+    beautify hook); toolbar &amp; "Smart shapes" selector added to <code>public/index.html</code>. Recognizer tests run via
+    <code>npm test</code>. Build &amp; server boot verified.
+  </div>
 
   <div class="card">
     <h3>1.1 — Draw / Select / Shapes modes</h3>
-    <div class="badges"><span class="badge p-high">High</span><span class="badge decided">decided</span></div>
+    <div class="badges"><span class="badge decided">✓ shipped</span><span class="badge p-high">High</span><span class="badge decided">decided</span></div>
     <p class="now">Now: <code>isDrawingMode</code> is permanently true, so nothing can be selected or moved.</p>
     <ul>
       <li><strong>Toolbar toggle</strong> for Draw / Select / Shapes (primary interaction — decided).</li>
@@ -141,13 +147,13 @@
 
   <div class="card">
     <h3>1.2 — Ink → editable vector objects</h3>
-    <div class="badges"><span class="badge p-high">High</span><span class="badge effort">mostly free</span></div>
+    <div class="badges"><span class="badge decided">✓ shipped</span><span class="badge p-high">High</span><span class="badge effort">mostly free</span></div>
     <p>Strokes are already Fabric <code>Path</code> objects. Once Select mode exists they're immediately movable/scalable — no conversion layer needed. Beautified shapes (below) are even cleaner to edit via handles.</p>
   </div>
 
   <div class="card">
     <h3>1.3 — Shape beautification on stroke completion</h3>
-    <div class="badges"><span class="badge p-med">Medium</span><span class="badge decided">set decided</span></div>
+    <div class="badges"><span class="badge decided">✓ shipped</span><span class="badge p-med">Medium</span><span class="badge decided">set decided</span></div>
     <p class="now">On <code>path:created</code>, classify the stroke's points and, if it strongly matches a primitive, swap the wobbly path for a clean Fabric shape (with a snap animation + one-tap undo).</p>
     <p><strong>Beautify set (decided):</strong> straight lines · arrows · rectangles/squares · circles/ellipses.</p>
     <ul>
@@ -158,7 +164,7 @@
 
   <div class="card">
     <h3>1.4 — "Smart Shapes" setting (Off / Manual / Auto)</h3>
-    <div class="badges"><span class="badge p-high">High</span><span class="badge decided">decided</span></div>
+    <div class="badges"><span class="badge decided">✓ shipped</span><span class="badge p-high">High</span><span class="badge decided">decided</span></div>
     <p>User-selectable behavior in a settings panel, so snapping never fights handwriting:</p>
     <ul>
       <li><strong>Off</strong> — pure ink (today's behavior).</li>
@@ -306,7 +312,7 @@
 
   <ol class="phases">
     <li>
-      <h4>Smart shapes + selection</h4>
+      <h4>Smart shapes + selection <span style="color:var(--green)">✓ done</span></h4>
       <p>§1 in full — toolbar modes, Fabric-native select/transform, shape beautifier (line/arrow/rect/ellipse), the Off/Manual/Auto setting. Self-contained, doesn't touch the AI layer, and leaves equation OCR safe by default.</p>
     </li>
     <li>
