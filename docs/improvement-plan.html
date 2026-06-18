@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Whiteboard — Modernization Plan (Draft v0.1)</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #181b24;
+    --panel-2: #1f2330;
+    --border: #2a2f3d;
+    --text: #e6e8ee;
+    --muted: #9aa3b2;
+    --accent: #6ea8fe;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --purple: #c084fc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 24px 80px; }
+  header.hero {
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, #1b2030, #14171f);
+    border-radius: 14px;
+    padding: 28px 30px;
+    margin-bottom: 28px;
+  }
+  header.hero h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -0.02em; }
+  header.hero .sub { color: var(--muted); font-size: 15px; }
+  .draft-note {
+    margin-top: 16px; padding: 12px 14px; border-radius: 10px;
+    background: rgba(110,168,254,0.08); border: 1px solid rgba(110,168,254,0.3);
+    font-size: 13.5px; color: #cfe0ff;
+  }
+  h2 { font-size: 20px; margin: 38px 0 6px; letter-spacing: -0.01em; }
+  h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  .section-lead { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px; margin: 12px 0;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 6px 0; font-size: 14px; color: #d4d8e2; }
+  .card p.now { color: var(--muted); }
+  .card ul { margin: 8px 0 4px; padding-left: 20px; font-size: 14px; color: #d4d8e2; }
+  .card li { margin: 3px 0; }
+  code {
+    background: var(--panel-2); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 6px; font-size: 12.5px;
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: #e7d9ff;
+  }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .badge {
+    font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .p-now  { background: rgba(248,113,113,0.15); color: var(--red); border: 1px solid rgba(248,113,113,0.4); }
+  .p-high { background: rgba(251,191,36,0.13); color: var(--amber); border: 1px solid rgba(251,191,36,0.35); }
+  .p-med  { background: rgba(110,168,254,0.13); color: var(--accent); border: 1px solid rgba(110,168,254,0.35); }
+  .p-low  { background: rgba(154,163,178,0.12); color: var(--muted); border: 1px solid rgba(154,163,178,0.3); }
+  .effort { background: rgba(192,132,252,0.12); color: var(--purple); border: 1px solid rgba(192,132,252,0.35); }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  td.bad { color: var(--red); }
+  td.good { color: var(--green); }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--muted); margin: 6px 0 4px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  ol.phases { padding-left: 0; list-style: none; counter-reset: ph; }
+  ol.phases > li {
+    counter-increment: ph; position: relative; padding: 14px 16px 14px 54px;
+    border: 1px solid var(--border); border-radius: 12px; margin: 10px 0; background: var(--panel);
+  }
+  ol.phases > li::before {
+    content: counter(ph); position: absolute; left: 16px; top: 14px;
+    width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #0b0d12;
+    font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center;
+  }
+  ol.phases h4 { margin: 0 0 4px; font-size: 15px; }
+  ol.phases p { margin: 0; font-size: 13.5px; color: var(--muted); }
+  footer { margin-top: 50px; color: var(--muted); font-size: 12.5px; text-align: center; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>Smart Whiteboard — Modernization Plan</h1>
+    <div class="sub">Draft v0.1 · 2026-06-18 · focus: bringing the AI integration up to current model APIs &amp; capabilities</div>
+    <div class="draft-note">
+      🛠️ <strong>This is a sketch to iterate on, not a final spec.</strong> Items are grouped by theme and tagged
+      with a rough priority. Nothing here has been implemented yet — the goal is to agree on direction and
+      sequencing before writing code. Tell me what to cut, reorder, or expand.
+    </div>
+  </header>
+
+  <p class="legend">
+    <span><span class="dot" style="background:var(--red)"></span> Broken / do now</span>
+    <span><span class="dot" style="background:var(--amber)"></span> High value</span>
+    <span><span class="dot" style="background:var(--accent)"></span> Medium</span>
+    <span><span class="dot" style="background:var(--muted)"></span> Nice-to-have</span>
+  </p>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">1</span>AI models &amp; APIs — the headline</h2>
+  <p class="section-lead">
+    The app was built around model IDs and SDKs that have since been superseded — and in one case removed entirely.
+    This is where "a LOT has changed" bites hardest.
+  </p>
+
+  <div class="card">
+    <h3>1.1 — Gemini path is broken in production</h3>
+    <div class="badges"><span class="badge p-now">Broken now</span></div>
+    <p class="now">Now: <code>server.js</code> calls <code>gemini-2.0-flash</code> via the <code>@google/generative-ai</code> SDK (<code>^0.3.0</code>) for both <code>/solve</code> and <code>/extract-equation-gemini</code>.</p>
+    <p>Google <strong>shut down Gemini 2.0 Flash on June 1, 2026</strong> — those requests now return <code>404</code>. The "Gemini (Advanced)" dropdown option is effectively dead.</p>
+    <ul>
+      <li>Migrate to a current model — <strong>Gemini 3.5 Flash</strong> (GA, fast/cheap, good fit for this app) or <strong>Gemini 3 Pro</strong> for harder reasoning.</li>
+      <li>Replace the deprecated <code>@google/generative-ai</code> package with the GA <strong><code>@google/genai</code></strong> SDK (the old one is end-of-life; new features ship only on the new SDK).</li>
+      <li>Use native structured-output / JSON-schema response support instead of the current "ask for JSON, then regex it out of a markdown code fence" hack.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>1.2 — OpenAI models are several generations behind</h3>
+    <div class="badges"><span class="badge p-high">High</span></div>
+    <p class="now">Now: vision extraction uses <code>gpt-4o</code>; text solving uses <code>gpt-4</code> (raw <code>axios</code> POST to <code>/v1/chat/completions</code>).</p>
+    <ul>
+      <li>Move to the current lineup — <strong>GPT-5.5</strong> (flagship) or <strong>GPT-5.4 / 5.4-mini</strong> for a cheaper, faster path. <code>gpt-4</code> for solving is the most dated call in the codebase.</li>
+      <li>Adopt the official <strong><code>openai</code> SDK</strong> instead of hand-rolled <code>axios</code> calls — gets retries, typing, and structured outputs for free.</li>
+      <li>Use <strong>structured outputs</strong> (JSON schema) so the extraction endpoint can't return malformed JSON — deletes a whole class of parse-error handling.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>1.3 — Add Claude as a provider option</h3>
+    <div class="badges"><span class="badge p-med">Medium</span><span class="badge effort">new capability</span></div>
+    <p>Claude is a natural third backend here: strong handwriting/diagram <strong>vision</strong>, and first-class <strong>structured outputs</strong> (<code>output_config.format</code> with a JSON schema) that map directly onto the app's <code>{ dependentVariable, expression, scope, ranges }</code> contract.</p>
+    <ul>
+      <li>Use the official <code>@anthropic-ai/sdk</code>. Suggested models: <code>claude-haiku-4-5</code> (cheap/fast for extraction) or <code>claude-opus-4-8</code> / <code>claude-sonnet-4-6</code> for the hardest handwriting.</li>
+      <li>Vision + structured outputs in a single call replaces the OpenAI Vision → parse → validate dance.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>1.4 — Unify the provider abstraction</h3>
+    <div class="badges"><span class="badge p-high">High</span></div>
+    <p class="now">Now: <code>/extract-equation</code> (OpenAI) and <code>/extract-equation-gemini</code> are separate endpoints with duplicated prompts, schemas, and validation; the frontend branches on model name to pick a URL.</p>
+    <ul>
+      <li>One endpoint — e.g. <code>POST /extract</code> with a <code>provider</code> field — backed by a small provider interface (<code>extract(image)</code>, <code>solve(equation)</code>).</li>
+      <li>Single shared JSON schema + prompt, defined once. Per-provider files (<code>providers/openai.js</code>, <code>gemini.js</code>, <code>claude.js</code>, <code>mathjs.js</code>) implement the interface.</li>
+      <li>Centralizes model IDs (no more hardcoded strings scattered in <code>server.js</code>) and makes "swap the model" a one-line change.</li>
+    </ul>
+  </div>
+
+  <h3 style="font-size:15px;margin:22px 0 6px;color:var(--muted)">Model reference — current vs. in-code</h3>
+  <table>
+    <thead><tr><th>Provider</th><th>In code today</th><th>Status</th><th>Suggested target</th></tr></thead>
+    <tbody>
+      <tr><td>Google Gemini</td><td class="bad">gemini-2.0-flash</td><td class="bad">Shut down Jun 1 2026 (404)</td><td class="good">Gemini 3.5 Flash / 3 Pro</td></tr>
+      <tr><td>OpenAI (vision)</td><td>gpt-4o</td><td>Legacy, still works</td><td class="good">GPT-5.5 / GPT-5.4</td></tr>
+      <tr><td>OpenAI (solve)</td><td class="bad">gpt-4</td><td>Very dated</td><td class="good">GPT-5.4 / 5.4-mini</td></tr>
+      <tr><td>Anthropic Claude</td><td>—</td><td>Not integrated</td><td class="good">claude-haiku-4-5 / opus-4-8</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">2</span>Security &amp; configuration</h2>
+  <p class="section-lead">Small but important fixes around secrets and failure modes.</p>
+
+  <div class="card">
+    <h3>2.1 — Validate API keys at startup</h3>
+    <div class="badges"><span class="badge p-high">High</span></div>
+    <p class="now">Now: missing <code>OPENAI_API_KEY</code> / <code>GEMINI_API_KEY</code> isn't checked — calls just fail at request time with opaque errors.</p>
+    <p>Fail fast on boot (or clearly disable a provider in the UI when its key is absent), so a misconfigured deploy is obvious.</p>
+  </div>
+
+  <div class="card">
+    <h3>2.2 — Tighten request handling</h3>
+    <div class="badges"><span class="badge p-med">Medium</span></div>
+    <ul>
+      <li>Lock down CORS (currently wide-open <code>cors()</code>) to known origins.</li>
+      <li>Add basic rate limiting on the AI endpoints — image calls are billable.</li>
+      <li>Trim verbose <code>console.log</code> of raw model responses / equations in <code>server.js</code>.</li>
+    </ul>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">3</span>Code architecture &amp; quality</h2>
+  <p class="section-lead">The phase-1 refactor already split the frontend monolith into modules. These build on that.</p>
+
+  <div class="card">
+    <h3>3.1 — Remove the dual button-wiring</h3>
+    <div class="badges"><span class="badge p-med">Medium</span></div>
+    <p class="now">Now: several buttons (Solve, Clear, model select, test-equation) are wired both in <code>src/ui.js</code> <em>and</em> in the inline <code>&lt;script&gt;</code> in <code>public/index.html</code>, bridged via <code>window.*</code> globals.</p>
+    <p>Pick one home (the bundle), delete the inline duplicates, and drop the <code>window</code> bridge. Reduces "why did this fire twice?" confusion.</p>
+  </div>
+
+  <div class="card">
+    <h3>3.2 — Add a test suite</h3>
+    <div class="badges"><span class="badge p-high">High</span></div>
+    <p class="now">Now: no tests, no linter; <code>npm test</code> is a no-op.</p>
+    <ul>
+      <li>Unit tests for the pure logic — <code>/graph</code> point sampling, JSON extraction/validation, the provider interface (mocked).</li>
+      <li>Add ESLint + a formatter so future changes stay consistent.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>3.3 — Production build &amp; dependency refresh</h3>
+    <div class="badges"><span class="badge p-low">Nice-to-have</span></div>
+    <ul>
+      <li>Default deploys to <code>build:prod</code>; serve hashed bundles. Webpack currently defaults to dev mode.</li>
+      <li>Audit / bump deps (Fabric, Chart.js, Express) and wire up the AI SDKs above.</li>
+      <li>Remove leftover scratch files (<code>public/test.html</code>) if unused.</li>
+    </ul>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">4</span>Product / UX opportunities</h2>
+  <p class="section-lead">Optional, once the foundation is solid — captured here so we don't lose them.</p>
+
+  <div class="card">
+    <h3>4.1 — Smarter equation handling</h3>
+    <div class="badges"><span class="badge p-low">Idea</span></div>
+    <ul>
+      <li>Support systems of equations / multiple curves on one graph.</li>
+      <li>Stream the model's reasoning into the output panel for "show your work" solving.</li>
+      <li>Let users correct a misread equation inline and re-graph without redrawing.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>4.2 — Persistence &amp; sharing</h3>
+    <div class="badges"><span class="badge p-low">Idea</span></div>
+    <p>Save/restore boards (Fabric JSON), shareable links, or export beyond the current PNG.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">5</span>Suggested sequencing</h2>
+  <p class="section-lead">A rough order of operations — happy to reshuffle.</p>
+
+  <ol class="phases">
+    <li>
+      <h4>Unbreak &amp; modernize the AI layer</h4>
+      <p>Fix Gemini (1.1), refresh OpenAI models + SDK (1.2), introduce the provider abstraction (1.4). Restores full functionality and removes the duplicated extract endpoints.</p>
+    </li>
+    <li>
+      <h4>Harden config &amp; secrets</h4>
+      <p>Key validation (2.1), CORS + rate limiting + log hygiene (2.2). Quick wins once the AI layer is in flux anyway.</p>
+    </li>
+    <li>
+      <h4>Add Claude + structured outputs everywhere</h4>
+      <p>Third provider (1.3) on top of the now-clean abstraction; switch all providers to schema-validated JSON output.</p>
+    </li>
+    <li>
+      <h4>Quality net</h4>
+      <p>Tests + lint (3.2), de-duplicate button wiring (3.1), production build (3.3).</p>
+    </li>
+    <li>
+      <h4>Product bets</h4>
+      <p>Pick from section 4 based on where you want to take the app.</p>
+    </li>
+  </ol>
+
+  <footer>
+    Draft generated for iteration · edit me at <code>docs/improvement-plan.html</code><br>
+    Sources: OpenAI &amp; Google AI developer docs (Jun 2026), Anthropic model reference.
+  </footer>
+
+</div>
+</body>
+</html>
