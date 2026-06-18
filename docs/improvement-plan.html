@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Whiteboard — Modernization Plan (Draft v0.1)</title>
+<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.2)</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -44,6 +44,7 @@
   h2 { font-size: 20px; margin: 38px 0 6px; letter-spacing: -0.01em; }
   h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 8px; }
   .section-lead { color: var(--muted); font-size: 14px; margin: 0 0 16px; }
+  .star { color: var(--purple); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-left: 8px; }
   .card {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 12px; padding: 18px 20px; margin: 12px 0;
@@ -68,6 +69,8 @@
   .p-med  { background: rgba(110,168,254,0.13); color: var(--accent); border: 1px solid rgba(110,168,254,0.35); }
   .p-low  { background: rgba(154,163,178,0.12); color: var(--muted); border: 1px solid rgba(154,163,178,0.3); }
   .effort { background: rgba(192,132,252,0.12); color: var(--purple); border: 1px solid rgba(192,132,252,0.35); }
+  .decided { background: rgba(74,222,128,0.12); color: var(--green); border: 1px solid rgba(74,222,128,0.35); }
+  .open { background: rgba(251,191,36,0.12); color: var(--amber); border: 1px solid rgba(251,191,36,0.35); }
   table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13.5px; }
   th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -88,6 +91,7 @@
   }
   ol.phases h4 { margin: 0 0 4px; font-size: 15px; }
   ol.phases p { margin: 0; font-size: 13.5px; color: var(--muted); }
+  .qbox { border-left: 3px solid var(--amber); background: rgba(251,191,36,0.06); padding: 10px 14px; margin: 10px 0; border-radius: 0 8px 8px 0; font-size: 13.5px; }
   footer { margin-top: 50px; color: var(--muted); font-size: 12.5px; text-align: center; }
   a { color: var(--accent); }
 </style>
@@ -96,12 +100,13 @@
 <div class="wrap">
 
   <header class="hero">
-    <h1>Smart Whiteboard — Modernization Plan</h1>
-    <div class="sub">Draft v0.1 · 2026-06-18 · focus: bringing the AI integration up to current model APIs &amp; capabilities</div>
+    <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
+    <div class="sub">Draft v0.2 · 2026-06-18 · now covers interactive-canvas features &amp; a conversational voice mode, plus the AI-model modernization</div>
     <div class="draft-note">
-      🛠️ <strong>This is a sketch to iterate on, not a final spec.</strong> Items are grouped by theme and tagged
-      with a rough priority. Nothing here has been implemented yet — the goal is to agree on direction and
-      sequencing before writing code. Tell me what to cut, reorder, or expand.
+      🛠️ <strong>Living sketch — iterate freely.</strong> v0.2 adds two new feature workstreams the user asked for
+      (smart shapes + selection, and a conversational voice mode) ahead of the original modernization items.
+      <span class="badge decided" style="margin-left:4px">green = decided</span>
+      <span class="badge open">amber = open question</span>
     </div>
   </header>
 
@@ -110,60 +115,148 @@
     <span><span class="dot" style="background:var(--amber)"></span> High value</span>
     <span><span class="dot" style="background:var(--accent)"></span> Medium</span>
     <span><span class="dot" style="background:var(--muted)"></span> Nice-to-have</span>
+    <span><span class="dot" style="background:var(--purple)"></span> New feature</span>
   </p>
 
   <!-- ============================================================ -->
-  <h2><span class="num">1</span>AI models &amp; APIs — the headline</h2>
+  <h2><span class="num">1</span>Interactive canvas — smart shapes &amp; selection <span class="star">★ new feature</span></h2>
   <p class="section-lead">
-    The app was built around model IDs and SDKs that have since been superseded — and in one case removed entirely.
-    This is where "a LOT has changed" bites hardest.
+    Microsoft-Whiteboard-style behavior: freehand strokes snap to clean shapes, and everything becomes a
+    selectable, movable vector object. <strong>Key insight:</strong> Fabric.js already stores every brush stroke as a
+    vector <code>Path</code> — the canvas is just locked in drawing mode. Most of this is unlocking + a shape classifier,
+    not a new engine.
   </p>
 
   <div class="card">
-    <h3>1.1 — Gemini path is broken in production</h3>
+    <h3>1.1 — Draw / Select / Shapes modes</h3>
+    <div class="badges"><span class="badge p-high">High</span><span class="badge decided">decided</span></div>
+    <p class="now">Now: <code>isDrawingMode</code> is permanently true, so nothing can be selected or moved.</p>
+    <ul>
+      <li><strong>Toolbar toggle</strong> for Draw / Select / Shapes (primary interaction — decided).</li>
+      <li><strong>Hold-a-modifier</strong> (e.g. Space) for temporary select without leaving Draw (decided).</li>
+      <li>Select mode flips <code>isDrawingMode = false</code> → native Fabric marquee multi-select, move, resize, rotate, delete, group. Existing pinch-zoom/pan keeps working.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>1.2 — Ink → editable vector objects</h3>
+    <div class="badges"><span class="badge p-high">High</span><span class="badge effort">mostly free</span></div>
+    <p>Strokes are already Fabric <code>Path</code> objects. Once Select mode exists they're immediately movable/scalable — no conversion layer needed. Beautified shapes (below) are even cleaner to edit via handles.</p>
+  </div>
+
+  <div class="card">
+    <h3>1.3 — Shape beautification on stroke completion</h3>
+    <div class="badges"><span class="badge p-med">Medium</span><span class="badge decided">set decided</span></div>
+    <p class="now">On <code>path:created</code>, classify the stroke's points and, if it strongly matches a primitive, swap the wobbly path for a clean Fabric shape (with a snap animation + one-tap undo).</p>
+    <p><strong>Beautify set (decided):</strong> straight lines · arrows · rectangles/squares · circles/ellipses.</p>
+    <ul>
+      <li>Lightweight geometric classifier (line-fit residuals; closed-vs-open; corner detection via Ramer–Douglas–Peucker; radial-variance for circles; hook-detection for arrows). No heavy gesture library — keeps deps minimal and gives direct "snap straight" control.</li>
+      <li>Right-angle / square snapping for rectangles; equal-axis snapping for circles.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>1.4 — "Smart Shapes" setting (Off / Manual / Auto)</h3>
+    <div class="badges"><span class="badge p-high">High</span><span class="badge decided">decided</span></div>
+    <p>User-selectable behavior in a settings panel, so snapping never fights handwriting:</p>
+    <ul>
+      <li><strong>Off</strong> — pure ink (today's behavior).</li>
+      <li><strong>Manual</strong> <em>(default)</em> — snapping only fires in <em>Shapes</em> mode; Draw mode stays raw ink.</li>
+      <li><strong>Auto</strong> — any strongly-matching stroke snaps even in Draw mode (the "magic", opt-in).</li>
+    </ul>
+    <p><strong>Why this matters:</strong> the app's core is OCR of handwritten equations. Defaulting to <em>Manual</em> keeps the
+    crop-and-extract pipeline <strong>completely unaffected</strong> — a <code>2</code> never gets "beautified" into a circle.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">2</span>Conversational voice mode <span class="star">★ new feature</span></h2>
+  <p class="section-lead">
+    A continuous voice dialogue where the model watches the board, talks back, and asks for clarification —
+    a big step up from today's one-shot <code>webkitSpeechRecognition</code> (which is also hardcoded to <code>sv-SE</code>).
+    This is a larger, separate workstream from §1.
+  </p>
+
+  <div class="card">
+    <h3>2.1 — Continuous duplex voice</h3>
+    <div class="badges"><span class="badge p-med">Medium</span><span class="badge effort">bigger bet</span></div>
+    <p class="now">Now: <code>speech.js</code> does single-utterance recognition, locale-locked to Swedish, no spoken responses.</p>
+    <ul>
+      <li>Adopt a <strong>realtime / live API</strong> — Google <strong>Gemini Live</strong> or <strong>OpenAI Realtime</strong> — for low-latency speech-in / speech-out with barge-in (interrupt the model mid-sentence).</li>
+      <li>Continuous listening + natural spoken replies; fix the hardcoded locale while we're here.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>2.2 — Vision grounding (model sees the board)</h3>
+    <div class="badges"><span class="badge p-med">Medium</span></div>
+    <ul>
+      <li>Periodically (on change / on demand) feed a board snapshot into the live session — reuse the existing <code>cropCanvasToBoundingBox</code> JPEG.</li>
+      <li>The model can then reference what's drawn and <strong>ask clarifying questions by voice</strong> ("is that a 7 or a 1?", "plot both curves?") — exactly the requested behavior.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>2.3 — Model acts on / draws back to the board</h3>
+    <div class="badges"><span class="badge p-low">Stretch</span></div>
+    <p>Voice commands trigger solve/graph; the model annotates or sketches back onto the canvas — a natural extension of the current Chart.js → Fabric graph rendering.</p>
+  </div>
+
+  <div class="card">
+    <h3>2.4 — Avatar / streamed presenter video</h3>
+    <div class="badges"><span class="badge p-low">Stretch</span><span class="badge open">needs scoping</span></div>
+    <p>"Streamer video generated from the whiteboard input." Two readings with very different cost:</p>
+    <ul>
+      <li><strong>(a) Talking-head AI presenter</strong> — realtime avatar service narrating. Heavy third-party dependency (latency, cost, external vendor).</li>
+      <li><strong>(b) Model responding visually on the board</strong> — live annotation / diagram generation. More in-scope, arguably more useful for a whiteboard.</li>
+    </ul>
+    <div class="qbox">❓ <strong>Open question:</strong> which of (a) / (b) — or both, with the avatar as a later stretch goal — did you have in mind?</div>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="num">3</span>AI models &amp; APIs</h2>
+  <p class="section-lead">
+    The original headline: the app was built around model IDs and SDKs that have since been superseded — and in one case removed.
+  </p>
+
+  <div class="card">
+    <h3>3.1 — Gemini path is broken in production</h3>
     <div class="badges"><span class="badge p-now">Broken now</span></div>
-    <p class="now">Now: <code>server.js</code> calls <code>gemini-2.0-flash</code> via the <code>@google/generative-ai</code> SDK (<code>^0.3.0</code>) for both <code>/solve</code> and <code>/extract-equation-gemini</code>.</p>
-    <p>Google <strong>shut down Gemini 2.0 Flash on June 1, 2026</strong> — those requests now return <code>404</code>. The "Gemini (Advanced)" dropdown option is effectively dead.</p>
+    <p class="now">Now: <code>server.js</code> calls <code>gemini-2.0-flash</code> via the deprecated <code>@google/generative-ai</code> SDK.</p>
+    <p>Google <strong>shut down Gemini 2.0 Flash on June 1, 2026</strong> — those requests now return <code>404</code>; the "Gemini" option is dead.</p>
     <ul>
-      <li>Migrate to a current model — <strong>Gemini 3.5 Flash</strong> (GA, fast/cheap, good fit for this app) or <strong>Gemini 3 Pro</strong> for harder reasoning.</li>
-      <li>Replace the deprecated <code>@google/generative-ai</code> package with the GA <strong><code>@google/genai</code></strong> SDK (the old one is end-of-life; new features ship only on the new SDK).</li>
-      <li>Use native structured-output / JSON-schema response support instead of the current "ask for JSON, then regex it out of a markdown code fence" hack.</li>
+      <li>Migrate to <strong>Gemini 3.5 Flash</strong> (GA, fast/cheap) or <strong>Gemini 3 Pro</strong>; move to the GA <code>@google/genai</code> SDK.</li>
+      <li>Use native structured-output / JSON-schema responses instead of regexing JSON out of a markdown fence.</li>
     </ul>
   </div>
 
   <div class="card">
-    <h3>1.2 — OpenAI models are several generations behind</h3>
+    <h3>3.2 — OpenAI models are generations behind</h3>
     <div class="badges"><span class="badge p-high">High</span></div>
-    <p class="now">Now: vision extraction uses <code>gpt-4o</code>; text solving uses <code>gpt-4</code> (raw <code>axios</code> POST to <code>/v1/chat/completions</code>).</p>
+    <p class="now">Now: vision uses <code>gpt-4o</code>; solving uses <code>gpt-4</code> via hand-rolled <code>axios</code>.</p>
     <ul>
-      <li>Move to the current lineup — <strong>GPT-5.5</strong> (flagship) or <strong>GPT-5.4 / 5.4-mini</strong> for a cheaper, faster path. <code>gpt-4</code> for solving is the most dated call in the codebase.</li>
-      <li>Adopt the official <strong><code>openai</code> SDK</strong> instead of hand-rolled <code>axios</code> calls — gets retries, typing, and structured outputs for free.</li>
-      <li>Use <strong>structured outputs</strong> (JSON schema) so the extraction endpoint can't return malformed JSON — deletes a whole class of parse-error handling.</li>
+      <li>Move to <strong>GPT-5.5</strong> / <strong>GPT-5.4(-mini)</strong>; adopt the official <code>openai</code> SDK; use structured outputs.</li>
     </ul>
   </div>
 
   <div class="card">
-    <h3>1.3 — Add Claude as a provider option</h3>
+    <h3>3.3 — Add Claude as a provider option</h3>
     <div class="badges"><span class="badge p-med">Medium</span><span class="badge effort">new capability</span></div>
-    <p>Claude is a natural third backend here: strong handwriting/diagram <strong>vision</strong>, and first-class <strong>structured outputs</strong> (<code>output_config.format</code> with a JSON schema) that map directly onto the app's <code>{ dependentVariable, expression, scope, ranges }</code> contract.</p>
-    <ul>
-      <li>Use the official <code>@anthropic-ai/sdk</code>. Suggested models: <code>claude-haiku-4-5</code> (cheap/fast for extraction) or <code>claude-opus-4-8</code> / <code>claude-sonnet-4-6</code> for the hardest handwriting.</li>
-      <li>Vision + structured outputs in a single call replaces the OpenAI Vision → parse → validate dance.</li>
-    </ul>
+    <p>Strong handwriting vision + first-class structured outputs (<code>output_config.format</code>) mapping onto the
+    <code>{ dependentVariable, expression, scope, ranges }</code> contract. Official <code>@anthropic-ai/sdk</code>;
+    suggested <code>claude-haiku-4-5</code> (cheap/fast) or <code>claude-opus-4-8</code> for hardest handwriting.</p>
   </div>
 
   <div class="card">
-    <h3>1.4 — Unify the provider abstraction</h3>
+    <h3>3.4 — Unify the provider abstraction</h3>
     <div class="badges"><span class="badge p-high">High</span></div>
-    <p class="now">Now: <code>/extract-equation</code> (OpenAI) and <code>/extract-equation-gemini</code> are separate endpoints with duplicated prompts, schemas, and validation; the frontend branches on model name to pick a URL.</p>
+    <p class="now">Now: <code>/extract-equation</code> and <code>/extract-equation-gemini</code> duplicate prompts/schemas/validation; the frontend branches on model name to pick a URL.</p>
     <ul>
-      <li>One endpoint — e.g. <code>POST /extract</code> with a <code>provider</code> field — backed by a small provider interface (<code>extract(image)</code>, <code>solve(equation)</code>).</li>
-      <li>Single shared JSON schema + prompt, defined once. Per-provider files (<code>providers/openai.js</code>, <code>gemini.js</code>, <code>claude.js</code>, <code>mathjs.js</code>) implement the interface.</li>
-      <li>Centralizes model IDs (no more hardcoded strings scattered in <code>server.js</code>) and makes "swap the model" a one-line change.</li>
+      <li>One endpoint (<code>POST /extract</code> with a <code>provider</code> field) over a small interface (<code>extract(image)</code>, <code>solve(eq)</code>).</li>
+      <li>Shared schema + prompt defined once; per-provider files implement it; model IDs centralized.</li>
+      <li>This same abstraction is where the voice mode (§2) plugs its realtime provider in.</li>
     </ul>
   </div>
 
-  <h3 style="font-size:15px;margin:22px 0 6px;color:var(--muted)">Model reference — current vs. in-code</h3>
   <table>
     <thead><tr><th>Provider</th><th>In code today</th><th>Status</th><th>Suggested target</th></tr></thead>
     <tbody>
@@ -175,106 +268,64 @@
   </table>
 
   <!-- ============================================================ -->
-  <h2><span class="num">2</span>Security &amp; configuration</h2>
-  <p class="section-lead">Small but important fixes around secrets and failure modes.</p>
+  <h2><span class="num">4</span>Security, config &amp; quality</h2>
+  <p class="section-lead">Foundational fixes that ride along with the AI-layer rework.</p>
 
   <div class="card">
-    <h3>2.1 — Validate API keys at startup</h3>
+    <h3>4.1 — Validate API keys at startup; tighten requests</h3>
     <div class="badges"><span class="badge p-high">High</span></div>
-    <p class="now">Now: missing <code>OPENAI_API_KEY</code> / <code>GEMINI_API_KEY</code> isn't checked — calls just fail at request time with opaque errors.</p>
-    <p>Fail fast on boot (or clearly disable a provider in the UI when its key is absent), so a misconfigured deploy is obvious.</p>
+    <ul>
+      <li>Fail fast (or visibly disable a provider) when its key is missing, instead of opaque request-time errors.</li>
+      <li>Lock down wide-open CORS; add rate limiting on the billable AI endpoints; trim verbose <code>console.log</code> of raw responses.</li>
+      <li>Address the <strong>57 Dependabot vulnerabilities</strong> flagged on the default branch.</li>
+    </ul>
   </div>
 
   <div class="card">
-    <h3>2.2 — Tighten request handling</h3>
+    <h3>4.2 — De-duplicate button wiring</h3>
+    <div class="badges"><span class="badge p-med">Medium</span></div>
+    <p class="now">Now: several buttons are wired both in <code>src/ui.js</code> and the inline <code>&lt;script&gt;</code>, bridged via <code>window.*</code>.</p>
+    <p>Consolidate into the bundle and drop the bridge — especially important before adding the new toolbar (§1.1).</p>
+  </div>
+
+  <div class="card">
+    <h3>4.3 — Tests, lint &amp; production build</h3>
     <div class="badges"><span class="badge p-med">Medium</span></div>
     <ul>
-      <li>Lock down CORS (currently wide-open <code>cors()</code>) to known origins.</li>
-      <li>Add basic rate limiting on the AI endpoints — image calls are billable.</li>
-      <li>Trim verbose <code>console.log</code> of raw model responses / equations in <code>server.js</code>.</li>
+      <li>Unit tests for pure logic (graph sampling, JSON validation, shape classifier, provider mocks); add ESLint + formatter.</li>
+      <li>Default deploys to <code>build:prod</code>; refresh deps (Fabric, Chart.js, Express) and wire the new AI SDKs.</li>
     </ul>
-  </div>
-
-  <!-- ============================================================ -->
-  <h2><span class="num">3</span>Code architecture &amp; quality</h2>
-  <p class="section-lead">The phase-1 refactor already split the frontend monolith into modules. These build on that.</p>
-
-  <div class="card">
-    <h3>3.1 — Remove the dual button-wiring</h3>
-    <div class="badges"><span class="badge p-med">Medium</span></div>
-    <p class="now">Now: several buttons (Solve, Clear, model select, test-equation) are wired both in <code>src/ui.js</code> <em>and</em> in the inline <code>&lt;script&gt;</code> in <code>public/index.html</code>, bridged via <code>window.*</code> globals.</p>
-    <p>Pick one home (the bundle), delete the inline duplicates, and drop the <code>window</code> bridge. Reduces "why did this fire twice?" confusion.</p>
-  </div>
-
-  <div class="card">
-    <h3>3.2 — Add a test suite</h3>
-    <div class="badges"><span class="badge p-high">High</span></div>
-    <p class="now">Now: no tests, no linter; <code>npm test</code> is a no-op.</p>
-    <ul>
-      <li>Unit tests for the pure logic — <code>/graph</code> point sampling, JSON extraction/validation, the provider interface (mocked).</li>
-      <li>Add ESLint + a formatter so future changes stay consistent.</li>
-    </ul>
-  </div>
-
-  <div class="card">
-    <h3>3.3 — Production build &amp; dependency refresh</h3>
-    <div class="badges"><span class="badge p-low">Nice-to-have</span></div>
-    <ul>
-      <li>Default deploys to <code>build:prod</code>; serve hashed bundles. Webpack currently defaults to dev mode.</li>
-      <li>Audit / bump deps (Fabric, Chart.js, Express) and wire up the AI SDKs above.</li>
-      <li>Remove leftover scratch files (<code>public/test.html</code>) if unused.</li>
-    </ul>
-  </div>
-
-  <!-- ============================================================ -->
-  <h2><span class="num">4</span>Product / UX opportunities</h2>
-  <p class="section-lead">Optional, once the foundation is solid — captured here so we don't lose them.</p>
-
-  <div class="card">
-    <h3>4.1 — Smarter equation handling</h3>
-    <div class="badges"><span class="badge p-low">Idea</span></div>
-    <ul>
-      <li>Support systems of equations / multiple curves on one graph.</li>
-      <li>Stream the model's reasoning into the output panel for "show your work" solving.</li>
-      <li>Let users correct a misread equation inline and re-graph without redrawing.</li>
-    </ul>
-  </div>
-
-  <div class="card">
-    <h3>4.2 — Persistence &amp; sharing</h3>
-    <div class="badges"><span class="badge p-low">Idea</span></div>
-    <p>Save/restore boards (Fabric JSON), shareable links, or export beyond the current PNG.</p>
   </div>
 
   <!-- ============================================================ -->
   <h2><span class="num">5</span>Suggested sequencing</h2>
-  <p class="section-lead">A rough order of operations — happy to reshuffle.</p>
+  <p class="section-lead">Interactive features first (self-contained, high-visibility), then unbreak/modernize AI, then the voice bet.</p>
 
   <ol class="phases">
     <li>
+      <h4>Smart shapes + selection</h4>
+      <p>§1 in full — toolbar modes, Fabric-native select/transform, shape beautifier (line/arrow/rect/ellipse), the Off/Manual/Auto setting. Self-contained, doesn't touch the AI layer, and leaves equation OCR safe by default.</p>
+    </li>
+    <li>
       <h4>Unbreak &amp; modernize the AI layer</h4>
-      <p>Fix Gemini (1.1), refresh OpenAI models + SDK (1.2), introduce the provider abstraction (1.4). Restores full functionality and removes the duplicated extract endpoints.</p>
+      <p>Fix Gemini (§3.1), refresh OpenAI (§3.2), build the provider abstraction (§3.4). Restores full functionality and removes duplicated endpoints.</p>
     </li>
     <li>
-      <h4>Harden config &amp; secrets</h4>
-      <p>Key validation (2.1), CORS + rate limiting + log hygiene (2.2). Quick wins once the AI layer is in flux anyway.</p>
+      <h4>Harden config &amp; clean up</h4>
+      <p>Key validation, CORS/rate-limit/log hygiene, dep vulns (§4.1); de-duplicate button wiring (§4.2).</p>
     </li>
     <li>
-      <h4>Add Claude + structured outputs everywhere</h4>
-      <p>Third provider (1.3) on top of the now-clean abstraction; switch all providers to schema-validated JSON output.</p>
+      <h4>Conversational voice mode</h4>
+      <p>§2 — realtime duplex voice + vision grounding + clarifying questions, on top of the clean provider layer. Scope the avatar/video question first (§2.4).</p>
     </li>
     <li>
-      <h4>Quality net</h4>
-      <p>Tests + lint (3.2), de-duplicate button wiring (3.1), production build (3.3).</p>
-    </li>
-    <li>
-      <h4>Product bets</h4>
-      <p>Pick from section 4 based on where you want to take the app.</p>
+      <h4>Claude provider + quality net</h4>
+      <p>Add Claude (§3.3), structured outputs everywhere, tests + lint + prod build (§4.3).</p>
     </li>
   </ol>
 
   <footer>
-    Draft generated for iteration · edit me at <code>docs/improvement-plan.html</code><br>
+    Draft v0.2 · edit me at <code>docs/improvement-plan.html</code><br>
     Sources: OpenAI &amp; Google AI developer docs (Jun 2026), Anthropic model reference.
   </footer>
 
