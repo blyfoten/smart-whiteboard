@@ -101,10 +101,11 @@
 
   <header class="hero">
     <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
-    <div class="sub">Draft v0.2 · 2026-06-18 · now covers interactive-canvas features &amp; a conversational voice mode, plus the AI-model modernization</div>
+    <div class="sub">Draft v0.3 · 2026-06-18 · interactive-canvas features &amp; a synchronized audio+video voice mode, plus the AI-model modernization</div>
     <div class="draft-note">
-      🛠️ <strong>Living sketch — iterate freely.</strong> v0.2 adds two new feature workstreams the user asked for
-      (smart shapes + selection, and a conversational voice mode) ahead of the original modernization items.
+      🛠️ <strong>Living sketch — iterate freely.</strong> v0.3 refines the voice mode (§2) into a single Gemini Live session
+      that streams the whiteboard as live video <em>in sync</em> with mic audio. v0.2 added the two feature workstreams
+      (smart shapes + selection, and the voice mode) ahead of the original modernization items.
       <span class="badge decided" style="margin-left:4px">green = decided</span>
       <span class="badge open">amber = open question</span>
     </div>
@@ -171,45 +172,47 @@
   <!-- ============================================================ -->
   <h2><span class="num">2</span>Conversational voice mode <span class="star">★ new feature</span></h2>
   <p class="section-lead">
-    A continuous voice dialogue where the model watches the board, talks back, and asks for clarification —
-    a big step up from today's one-shot <code>webkitSpeechRecognition</code> (which is also hardcoded to <code>sv-SE</code>).
-    This is a larger, separate workstream from §1.
+    A single <strong>realtime multimodal session</strong> that ingests the user's mic audio <em>and</em> a live video feed of the
+    whiteboard on one <strong>synchronized</strong> stream — so the model perceives drawing and speech together (it sees a line
+    being drawn as you say "make this steeper") and can ask clarifying questions in sync. A big step up from today's
+    one-shot <code>webkitSpeechRecognition</code> (hardcoded to <code>sv-SE</code>). Larger, separate workstream from §1.
   </p>
 
   <div class="card">
-    <h3>2.1 — Continuous duplex voice</h3>
-    <div class="badges"><span class="badge p-med">Medium</span><span class="badge effort">bigger bet</span></div>
-    <p class="now">Now: <code>speech.js</code> does single-utterance recognition, locale-locked to Swedish, no spoken responses.</p>
+    <h3>2.1 — Realtime multimodal live session</h3>
+    <div class="badges"><span class="badge p-med">Medium</span><span class="badge effort">bigger bet</span><span class="badge decided">provider chosen</span></div>
+    <p class="now">Now: <code>speech.js</code> does single-utterance recognition, locale-locked to Swedish, no spoken responses, no vision.</p>
     <ul>
-      <li>Adopt a <strong>realtime / live API</strong> — Google <strong>Gemini Live</strong> or <strong>OpenAI Realtime</strong> — for low-latency speech-in / speech-out with barge-in (interrupt the model mid-sentence).</li>
-      <li>Continuous listening + natural spoken replies; fix the hardcoded locale while we're here.</li>
+      <li><strong>Lead provider: Google Gemini Live API.</strong> Purpose-built to ingest continuous <strong>synchronized</strong> audio + video + text on one <code>realtimeInput</code> stream, explicitly avoiding cross-modality temporal misalignment. Native-audio live model family (e.g. <code>gemini-live-2.5-flash-native-audio</code> — confirm the current ID at build time).</li>
+      <li>Low-latency speech-in / speech-out with barge-in (interrupt mid-sentence). Fix the hardcoded locale while here.</li>
+      <li>OpenAI Realtime (GA, WebRTC) is the fallback, but its video is closer to on-demand frame snapshots than a continuous synced feed — less suited to this.</li>
     </ul>
   </div>
 
   <div class="card">
-    <h3>2.2 — Vision grounding (model sees the board)</h3>
-    <div class="badges"><span class="badge p-med">Medium</span></div>
+    <h3>2.2 — Stream the whiteboard as live video, in sync with audio</h3>
+    <div class="badges"><span class="badge p-med">Medium</span><span class="badge decided">approach decided</span></div>
+    <p>This is the core ask: the board is <strong>streamed as video into the model</strong> alongside the mic, not fed as periodic stills.</p>
     <ul>
-      <li>Periodically (on change / on demand) feed a board snapshot into the live session — reuse the existing <code>cropCanvasToBoundingBox</code> JPEG.</li>
-      <li>The model can then reference what's drawn and <strong>ask clarifying questions by voice</strong> ("is that a 7 or a 1?", "plot both curves?") — exactly the requested behavior.</li>
+      <li><strong>Board → video:</strong> <code>canvasElement.captureStream(1)</code> yields a live <code>MediaStream</code> of the Fabric canvas — no screen recording. Downscale frames to <strong>≤768×768</strong> at <strong>~1 FPS</strong> (Gemini Live's recommended envelope; plenty for a whiteboard).</li>
+      <li><strong>Mic → audio:</strong> 16 kHz PCM16 in; model replies at 24 kHz. Both pushed on the same realtime stream so they stay time-aligned.</li>
+      <li>The model references what's being drawn and <strong>asks clarifying questions by voice</strong> ("is that a 7 or a 1?", "plot both curves?") — exactly the requested behavior.</li>
     </ul>
   </div>
 
   <div class="card">
-    <h3>2.3 — Model acts on / draws back to the board</h3>
+    <h3>2.3 — Key security &amp; cost gating</h3>
+    <div class="badges"><span class="badge p-high">High</span></div>
+    <ul>
+      <li>Never expose the Gemini key in the browser — proxy the Live session through the existing Express server (WebSocket relay) or mint ephemeral tokens.</li>
+      <li>Continuous video is the cost driver: only stream while voice mode is active; pause frames when the board is idle.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>2.4 — Model acts on / draws back to the board</h3>
     <div class="badges"><span class="badge p-low">Stretch</span></div>
-    <p>Voice commands trigger solve/graph; the model annotates or sketches back onto the canvas — a natural extension of the current Chart.js → Fabric graph rendering.</p>
-  </div>
-
-  <div class="card">
-    <h3>2.4 — Avatar / streamed presenter video</h3>
-    <div class="badges"><span class="badge p-low">Stretch</span><span class="badge open">needs scoping</span></div>
-    <p>"Streamer video generated from the whiteboard input." Two readings with very different cost:</p>
-    <ul>
-      <li><strong>(a) Talking-head AI presenter</strong> — realtime avatar service narrating. Heavy third-party dependency (latency, cost, external vendor).</li>
-      <li><strong>(b) Model responding visually on the board</strong> — live annotation / diagram generation. More in-scope, arguably more useful for a whiteboard.</li>
-    </ul>
-    <div class="qbox">❓ <strong>Open question:</strong> which of (a) / (b) — or both, with the avatar as a later stretch goal — did you have in mind?</div>
+    <p>Voice commands trigger solve/graph; the model annotates or sketches back onto the canvas — a natural extension of the current Chart.js → Fabric graph rendering. <em>(Note: an AI talking-head avatar is explicitly out of scope — "streamed video from the whiteboard" means the board streamed <strong>into</strong> the model, resolved in §2.2.)</em></p>
   </div>
 
   <!-- ============================================================ -->
@@ -316,7 +319,7 @@
     </li>
     <li>
       <h4>Conversational voice mode</h4>
-      <p>§2 — realtime duplex voice + vision grounding + clarifying questions, on top of the clean provider layer. Scope the avatar/video question first (§2.4).</p>
+      <p>§2 — a single Gemini Live session streaming synchronized mic audio + whiteboard video (~1 FPS), with spoken clarifying questions, behind a server-side relay. Built on top of the clean provider layer.</p>
     </li>
     <li>
       <h4>Claude provider + quality net</h4>
