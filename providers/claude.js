@@ -18,9 +18,10 @@ try {
 const VISION_MODEL = process.env.CLAUDE_VISION_MODEL || 'claude-haiku-4-5';
 const SOLVE_MODEL = process.env.CLAUDE_SOLVE_MODEL || 'claude-haiku-4-5';
 
-const client = Anthropic && process.env.ANTHROPIC_API_KEY
-    ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    : null;
+// Accept either ANTHROPIC_API_KEY (SDK standard) or CLAUDE_API_KEY (alias).
+const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+
+const client = Anthropic && apiKey ? new Anthropic({ apiKey }) : null;
 
 function textOf(resp) {
     const block = (resp.content || []).find((b) => b.type === 'text');
