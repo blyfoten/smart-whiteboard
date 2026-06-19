@@ -4,12 +4,20 @@
 // shut down 2026-06-01). responseMimeType forces raw JSON, so the markdown-fence
 // fallback in extract() is purely defensive.
 
-const { GoogleGenAI } = require('@google/genai');
 const { SYSTEM_PROMPT, EXTRACT_USER_PROMPT } = require('./schema');
+
+// Guard the SDK require so a not-yet-installed package disables this provider
+// rather than crashing the whole server.
+let GoogleGenAI = null;
+try {
+    ({ GoogleGenAI } = require('@google/genai'));
+} catch (e) {
+    console.warn('⚠️  `@google/genai` package not installed — Gemini provider disabled. Run `npm install`.');
+}
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
-const genAI = process.env.GEMINI_API_KEY
+const genAI = GoogleGenAI && process.env.GEMINI_API_KEY
     ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
     : null;
 

@@ -4,13 +4,21 @@
 // workload; set CLAUDE_VISION_MODEL / CLAUDE_SOLVE_MODEL to e.g. claude-opus-4-8
 // for the hardest handwriting. Uses ANTHROPIC_API_KEY.
 
-const Anthropic = require('@anthropic-ai/sdk');
 const { SYSTEM_PROMPT, EXTRACT_USER_PROMPT } = require('./schema');
+
+// Guard the SDK require so a not-yet-installed package disables this provider
+// rather than crashing the whole server.
+let Anthropic = null;
+try {
+    Anthropic = require('@anthropic-ai/sdk');
+} catch (e) {
+    console.warn('⚠️  `@anthropic-ai/sdk` package not installed — Claude provider disabled. Run `npm install`.');
+}
 
 const VISION_MODEL = process.env.CLAUDE_VISION_MODEL || 'claude-haiku-4-5';
 const SOLVE_MODEL = process.env.CLAUDE_SOLVE_MODEL || 'claude-haiku-4-5';
 
-const client = process.env.ANTHROPIC_API_KEY
+const client = Anthropic && process.env.ANTHROPIC_API_KEY
     ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     : null;
 
