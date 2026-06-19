@@ -105,6 +105,38 @@ export function initializeEventListeners() {
     saveBtn.addEventListener('click', () => saveScreenshot(getCanvas()));
   }
 
+  const clearBtn = document.getElementById('clear-btn');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => clearCanvas(getCanvas()));
+  }
+
+  const addTestBtn = document.getElementById('add-test-equation-btn');
+  if (addTestBtn) {
+    addTestBtn.addEventListener('click', () => {
+      const input = document.getElementById('test-equation');
+      const equation = input && input.value.trim();
+      if (!equation) {
+        alert('Please enter a test equation');
+        return;
+      }
+      const canvas = getCanvas();
+      if (!canvas) {
+        alert('Canvas not found!');
+        return;
+      }
+      const text = new IText(equation, {
+        left: 100,
+        top: 100,
+        fill: 'black',
+        fontSize: 30,
+        fontFamily: 'Arial',
+      });
+      canvas.add(text);
+      canvas.setActiveObject(text);
+      canvas.requestRenderAll();
+    });
+  }
+
   const uiElement = document.querySelector('.ui-element');
   if (!uiElement) return;
 

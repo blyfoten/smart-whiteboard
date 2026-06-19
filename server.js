@@ -47,7 +47,21 @@ const aiLimiter = rateLimit({ windowMs: 60 * 1000, max: 30 });
 
 // Middleware
 app.use(bodyParser.json({ limit: '10mb' })); // Increase size limit for large images
-app.use(cors());
+
+// Lock down CORS: allow same-origin / non-browser requests (no Origin header)
+// and any origin in ALLOWED_ORIGINS (comma-separated). Other cross-origin browser
+// calls get no CORS headers and are blocked by the browser. The app itself is
+// served same-origin, so this doesn't affect normal use.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+app.use(cors({
+    origin(origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(null, false);
+    },
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Serve the living improvement/feature plan at /plan

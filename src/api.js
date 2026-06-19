@@ -4,11 +4,10 @@ import { getCanvas, getCanvasBoundingBox, cropCanvasToBoundingBox } from './canv
 import { IText } from 'fabric';
 import { getCurrentModel } from './ui.js';
 import { renderGraph } from './graph.js';
+import { appendToOutput } from './output.js';
 
 function appendOutput(html, isError) {
-  if (window.appendToOutput) {
-    window.appendToOutput(html, isError);
-  }
+  appendToOutput(html, isError);
 }
 
 export function solveEquationFromText(equation) {

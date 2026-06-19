@@ -37,7 +37,10 @@ Providers live behind a small interface in **`providers/`**: `openai.js`, `gemin
 `src/index.js` is a thin orchestrator wired up on `DOMContentLoaded`. Module responsibilities:
 - `canvas.js` — Fabric.js canvas lifecycle (singleton via `getCanvas()`), free-draw brush, resize, bounding-box detection, crop-to-content (exports a JPEG data URL for the vision API), pinch-to-zoom/pan, undo, save-PNG, clear.
 - `api.js` — all `fetch` calls to the backend; owns the extract → graph data flow.
-- `ui.js` — button/dropdown event wiring, the `currentModel` state (`getCurrentModel()`), and the double-click-to-add-IText behavior.
+- `ui.js` — **all** button/dropdown event wiring (`initializeEventListeners`), the `currentModel` state (`getCurrentModel()`), and the double-click-to-add-IText behavior.
+- `output.js` — the "Solution Output" panel: `appendToOutput()` result cards, clear, mobile collapse (`initOutputPanel`).
+- `modes.js` — interaction modes (draw/select/shapes), the toolbar + Space-to-select, and the shape-beautify hook.
+- `shape-classifier.js` (pure geometry, unit-tested) + `shapes.js` (Fabric builders) — freehand stroke → clean primitive recognition.
 - `graph.js` — renders Chart.js to an **offscreen** canvas, then inserts the result as a Fabric image object (tagged `_isGraph`) onto the whiteboard.
 - `speech.js` — Web Speech API voice commands (note: locale is hardcoded to `sv-SE`).
 
@@ -45,9 +48,8 @@ Providers live behind a small interface in **`providers/`**: `openai.js`, `gemin
 
 ### Key cross-cutting patterns
 
-- **`window` globals are the bridge** between the bundle and the inline `<script>` in `public/index.html`. The bundle exposes `window.canvas`, `window.solveEquation`, `window.extractedEquationData`, and `window.appendToOutput` (the function that writes result cards into the output panel). State like the last extracted equation lives on `window.extractedEquationData`.
-- **Buttons are wired in two places.** `src/ui.js` (`initializeEventListeners`) AND the inline script in `public/index.html` both attach handlers to several buttons (`solve-eq-btn`, `clear-btn`, model-select, add-test-equation). When changing button behavior, check both. The inline script handles Clear and the test-equation input directly; `ui.js` handles extract/solve/graph/undo/save and dynamically creates a few buttons if absent.
-- **End-to-end graph flow:** draw → `cropCanvasToBoundingBox` (JPEG data URL) → `/extract-equation[-gemini]` → store JSON on `window.extractedEquationData` → `/graph` → `renderGraph` draws via Chart.js offscreen and adds a Fabric image.
+- **All UI behavior lives in the bundle.** `public/index.html` has **no inline script** (de-duplicated in §4.2) — every handler is wired in `src/` on `DOMContentLoaded`. A few `window` globals remain as a light bridge/state holder: `window.canvas`, `window.solveEquation`, `window.extractedEquationData` (last extracted equation), and `window.appendToOutput` (back-compat alias; `api.js` imports `appendToOutput` from `output.js` directly).
+- **End-to-end graph flow:** draw → `cropCanvasToBoundingBox` (JPEG data URL) → `POST /extract` (`{ image, provider }`) → store JSON on `window.extractedEquationData` → `/graph` → `renderGraph` draws via Chart.js offscreen and adds a Fabric image.
 
 ## Notes / known rough edges
 

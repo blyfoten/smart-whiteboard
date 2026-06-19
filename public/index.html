@@ -145,9 +145,6 @@
         bottom: 10px !important;
         right: 5vw !important;
       }
-      #debug-output {
-        display: none;
-      }
     }
     .result-block {
       margin-bottom: 10px;
@@ -208,9 +205,6 @@
         <input type="text" id="test-equation" placeholder="e.g., x^2 + 3x - 5 = 0" />
         <button id="add-test-equation-btn">Add Test Equation</button>
       </div>
-      <div id="debug-output" style="margin-top: 10px; border-top: 1px solid #ccc; padding-top: 5px; font-size: 12px; color: #666;">
-        Debug: No events
-      </div>
     </div>
     
     <!-- New Output Panel -->
@@ -225,119 +219,7 @@
     </div>
   </div>
   
+  <!-- All behavior is wired in the webpack bundle (src/). No inline script. -->
   <script src="dist/bundle.js"></script>
-  <script>
-    // Basic debugging
-    console.log('HTML inline script running');
-    const debugOutput = document.getElementById('debug-output');
-    
-    // Set up model selection
-    const modelSelect = document.getElementById('model-select');
-    modelSelect.addEventListener('change', function(e) {
-      debugOutput.textContent = 'Model changed: ' + e.target.value;
-      if (window.setCurrentModel) {
-        window.setCurrentModel(e.target.value);
-      } else {
-        window.currentModel = e.target.value;
-      }
-      console.log('Selected model:', e.target.value);
-    });
-    
-    // Direct event listener for solve button
-    document.getElementById('solve-eq-btn').addEventListener('click', function() {
-      debugOutput.textContent = 'Solve button clicked';
-      console.log('Solve button clicked directly from HTML');
-      
-      // Try to call the solveEquation function if it exists
-      if (window.solveEquation) {
-        window.solveEquation();
-      } else {
-        alert('solveEquation function not found!');
-      }
-    });
-    
-    // Direct event listener for clear button
-    document.getElementById('clear-btn').addEventListener('click', function() {
-      debugOutput.textContent = 'Clear button clicked';
-      console.log('Clear button clicked');
-      
-      if (window.canvas) {
-        window.canvas.clear();
-        window.canvas.backgroundColor = 'white';
-        window.canvas.requestRenderAll();
-        window.extractedEquationData = null;
-      } else {
-        alert('Canvas not found!');
-      }
-    });
-    
-    // Add test equation
-    document.getElementById('add-test-equation-btn').addEventListener('click', function() {
-      const equationInput = document.getElementById('test-equation');
-      const equation = equationInput.value.trim();
-      
-      if (!equation) {
-        alert('Please enter a test equation');
-        return;
-      }
-      
-      debugOutput.textContent = `Adding test equation: ${equation}`;
-      
-      if (window.canvas) {
-        const canvasToUse = window.canvas;
-        // Add the equation text to the canvas
-        const text = new fabric.IText(equation, {
-          left: 100,
-          top: 100,
-          fill: 'black',
-          fontSize: 30,
-          fontFamily: 'Arial',
-        });
-        canvasToUse.add(text);
-        canvasToUse.setActiveObject(text);
-        canvasToUse.renderAll();
-        
-        debugOutput.textContent += ' - Added to canvas successfully';
-      } else {
-        alert('Canvas not found!');
-      }
-    });
-    
-    // Set up output panel clear button
-    document.getElementById('clear-output').addEventListener('click', function(e) {
-      e.stopPropagation();
-      document.getElementById('output-content').innerHTML = 'Output cleared.';
-    });
-
-    // Toggle output panel on mobile
-    document.querySelector('.output-title').addEventListener('click', function() {
-      document.getElementById('output-panel').classList.toggle('collapsed');
-    });
-    // Start collapsed on mobile
-    if (window.innerWidth <= 768) {
-      document.getElementById('output-panel').classList.add('collapsed');
-    }
-    
-    // Add a global function to append to the output panel
-    window.appendToOutput = function(content, isError = false) {
-      const outputContent = document.getElementById('output-content');
-      const resultBlock = document.createElement('div');
-      resultBlock.className = isError ? 'result-block error-block' : 'result-block';
-      resultBlock.innerHTML = content;
-      
-      // Add timestamp
-      const timestamp = document.createElement('div');
-      timestamp.style.fontSize = '11px';
-      timestamp.style.color = '#777';
-      timestamp.style.marginTop = '5px';
-      timestamp.textContent = new Date().toLocaleTimeString();
-      resultBlock.appendChild(timestamp);
-      
-      outputContent.appendChild(resultBlock);
-      
-      // Scroll to bottom
-      outputContent.scrollTop = outputContent.scrollHeight;
-    };
-  </script>
 </body>
 </html>

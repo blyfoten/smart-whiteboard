@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.7)</title>
+<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.8)</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -101,10 +101,9 @@
 
   <header class="hero">
     <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
-    <div class="sub">Draft v0.7 · 2026-06-18 · §1 shapes + all of §3 (Gemini fix, OpenAI refresh, provider abstraction, Claude) shipped; voice mode (§2) is the next big item</div>
+    <div class="sub">Draft v0.8 · 2026-06-18 · §1 shapes, all of §3, and §4 hardening (CORS, dedup, deps) shipped; voice mode (§2) is the next big item</div>
     <div class="draft-note">
-      🛠️ <strong>Living sketch — iterate freely.</strong> v0.7: <strong>§3.3 shipped</strong> — Claude added as a third provider (<code>claude-haiku-4-5</code>) through the same <code>providers/</code> interface.
-      All of §3 (3.1 Gemini, 3.2 OpenAI, 3.3 Claude, 3.4 abstraction) is now done, plus §1 smart shapes and §4.1 rate-limit/key-warnings. <strong>Next: the conversational voice mode (§2).</strong>
+      🛠️ <strong>Living sketch — iterate freely.</strong> v0.8: <strong>§4 hardening shipped</strong> — CORS locked down, the inline-script button wiring de-duplicated into the bundle (§4.2), dead <code>axios</code> removed, and dependency vulns cut from 26 → 4 (mathjs patched; the rest is fabric’s native build-time chain). Earlier: §1 shapes and all of §3. <strong>Next: the conversational voice mode (§2).</strong>
       <span class="badge decided" style="margin-left:4px">green = decided</span>
       <span class="badge open">amber = open question</span>
     </div>
@@ -298,15 +297,19 @@
     <ul>
       <li>✅ Startup warnings when a provider key is missing; <code>genAI</code> is <code>null</code> without a key so the server still boots.</li>
       <li>✅ Per-IP in-memory rate limiter (30 req/min) on the three billable endpoints — a basic guard for the public instance (not real auth).</li>
-      <li>Still TODO: lock down wide-open CORS; trim verbose <code>console.log</code> of raw responses; address the <strong>57 Dependabot vulnerabilities</strong> on the default branch.</li>
+      <li>✅ CORS locked down to same-origin + an <code>ALLOWED_ORIGINS</code> allowlist; verbose request logging trimmed.</li>
+      <li>Partly: dependency vulns cut 26 → 4 (removed dead <code>axios</code>, <code>npm audit fix</code>, patched <code>mathjs</code>). Remaining 4 are fabric’s native <code>canvas</code>/<code>tar</code> chain (build-time only; needs a breaking fabric v7 bump).</li>
     </ul>
   </div>
 
   <div class="card">
     <h3>4.2 — De-duplicate button wiring</h3>
-    <div class="badges"><span class="badge p-med">Medium</span></div>
-    <p class="now">Now: several buttons are wired both in <code>src/ui.js</code> and the inline <code>&lt;script&gt;</code>, bridged via <code>window.*</code>.</p>
-    <p>Consolidate into the bundle and drop the bridge — especially important before adding the new toolbar (§1.1).</p>
+    <div class="badges"><span class="badge decided">✓ shipped</span></div>
+    <p class="now">Was: several buttons wired both in <code>src/ui.js</code> and an inline <code>&lt;script&gt;</code>, bridged via <code>window.*</code>.</p>
+    <ul>
+      <li>✅ Inline script removed entirely; <code>public/index.html</code> just loads the bundle.</li>
+      <li>✅ Clear / add-test-equation moved into <code>ui.js</code>; the output panel into a new <code>src/output.js</code>; <code>api.js</code> imports <code>appendToOutput</code> directly instead of via <code>window</code>.</li>
+    </ul>
   </div>
 
   <div class="card">
@@ -332,8 +335,8 @@
       <p>✓ Gemini fixed (§3.1), OpenAI refreshed to gpt-5.4 via the official SDK (§3.2), unified <code>/extract</code> + <code>providers/</code> interface (§3.4).</p>
     </li>
     <li>
-      <h4>Harden config &amp; clean up <span style="color:var(--amber)">◐ in progress</span></h4>
-      <p>✓ Key warnings + rate limiter (§4.1). Remaining: CORS lockdown, log hygiene, dep vulns; de-duplicate button wiring (§4.2).</p>
+      <h4>Harden config &amp; clean up <span style="color:var(--green)">✓ done</span></h4>
+      <p>✓ Key warnings + rate limiter + CORS lockdown + log hygiene (§4.1), dep-vuln cleanup, and the button-wiring de-duplication (§4.2). (Deep dep upgrade to fabric v7 left as a separate task.)</p>
     </li>
     <li>
       <h4>Conversational voice mode</h4>
