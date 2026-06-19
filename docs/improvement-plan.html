@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.5)</title>
+<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.6)</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -101,11 +101,11 @@
 
   <header class="hero">
     <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
-    <div class="sub">Draft v0.5 · 2026-06-18 · §1 (smart shapes) + §3.1 (Gemini unbroken) shipped; voice mode &amp; further AI modernization ahead</div>
+    <div class="sub">Draft v0.6 · 2026-06-18 · §1 shapes + the whole AI-layer modernization (§3.1/3.2/3.4) shipped; voice mode (§2) is the next big item</div>
     <div class="draft-note">
-      🛠️ <strong>Living sketch — iterate freely.</strong> v0.5: <strong>§3.1 (Gemini) is fixed</strong> — migrated to the
-      <code>@google/genai</code> SDK on <code>gemini-2.5-flash</code>, plus a per-IP rate limiter and startup key warnings (part of §4.1).
-      v0.4 shipped <strong>§1 smart shapes + selection</strong>. Next: OpenAI refresh (§3.2) + provider abstraction (§3.4), then the voice mode (§2).
+      🛠️ <strong>Living sketch — iterate freely.</strong> v0.6: <strong>§3.2 + §3.4 shipped</strong> — OpenAI refreshed to <code>gpt-5.4</code>
+      via the official SDK, and both providers now sit behind a unified <code>/extract</code> endpoint + <code>providers/</code> interface.
+      Earlier: §3.1 Gemini fix, §4.1 rate-limit/key-warnings, §1 smart shapes. <strong>Next: the conversational voice mode (§2).</strong>
       <span class="badge decided" style="margin-left:4px">green = decided</span>
       <span class="badge open">amber = open question</span>
     </div>
@@ -244,11 +244,15 @@
 
   <div class="card">
     <h3>3.2 — OpenAI models are generations behind</h3>
-    <div class="badges"><span class="badge p-high">High</span></div>
-    <p class="now">Now: vision uses <code>gpt-4o</code>; solving uses <code>gpt-4</code> via hand-rolled <code>axios</code>.</p>
+    <div class="badges"><span class="badge decided">✓ shipped</span></div>
+    <p class="now">Was: vision <code>gpt-4o</code>, solving <code>gpt-4</code>, via hand-rolled <code>axios</code>.</p>
     <ul>
-      <li>Move to <strong>GPT-5.5</strong> / <strong>GPT-5.4(-mini)</strong>; adopt the official <code>openai</code> SDK; use structured outputs.</li>
+      <li>✅ Adopted the official <code>openai</code> SDK; default model <code>gpt-5.4</code> for both vision &amp; solve (env-overridable via <code>OPENAI_VISION_MODEL</code> / <code>OPENAI_SOLVE_MODEL</code> — same 404 escape hatch as Gemini).</li>
+      <li>✅ JSON response format for extraction; dropped the raw <code>axios</code> calls.</li>
     </ul>
+    <div class="qbox" style="border-left-color:var(--amber); background:rgba(251,191,36,0.06)">
+      ⚙️ <strong>Deploy note:</strong> adds the <code>openai</code> dependency — <code>npm install</code> on the host once, then restart <code>npm run dev</code>.
+    </div>
   </div>
 
   <div class="card">
@@ -261,11 +265,11 @@
 
   <div class="card">
     <h3>3.4 — Unify the provider abstraction</h3>
-    <div class="badges"><span class="badge p-high">High</span></div>
-    <p class="now">Now: <code>/extract-equation</code> and <code>/extract-equation-gemini</code> duplicate prompts/schemas/validation; the frontend branches on model name to pick a URL.</p>
+    <div class="badges"><span class="badge decided">✓ shipped</span></div>
+    <p class="now">Was: <code>/extract-equation</code> and <code>/extract-equation-gemini</code> duplicated prompts/schemas/validation; the frontend branched on model name to pick a URL.</p>
     <ul>
-      <li>One endpoint (<code>POST /extract</code> with a <code>provider</code> field) over a small interface (<code>extract(image)</code>, <code>solve(eq)</code>).</li>
-      <li>Shared schema + prompt defined once; per-provider files implement it; model IDs centralized.</li>
+      <li>✅ Single <code>POST /extract</code> with a <code>provider</code> field, over a small interface — <code>providers/{openai,gemini}.js</code> implement <code>isConfigured()</code> / <code>extract(image)</code> / <code>solve(equation)</code>.</li>
+      <li>✅ Shared prompt + <code>validateExtraction</code> in <code>providers/schema.js</code>; registry in <code>providers/index.js</code>; model IDs centralized &amp; env-overridable. Old endpoints kept as thin aliases.</li>
       <li>This same abstraction is where the voice mode (§2) plugs its realtime provider in.</li>
     </ul>
   </div>
@@ -273,9 +277,9 @@
   <table>
     <thead><tr><th>Provider</th><th>In code today</th><th>Status</th><th>Suggested target</th></tr></thead>
     <tbody>
-      <tr><td>Google Gemini</td><td class="bad">gemini-2.0-flash</td><td class="bad">Shut down Jun 1 2026 (404)</td><td class="good">Gemini 3.5 Flash / 3 Pro</td></tr>
-      <tr><td>OpenAI (vision)</td><td>gpt-4o</td><td>Legacy, still works</td><td class="good">GPT-5.5 / GPT-5.4</td></tr>
-      <tr><td>OpenAI (solve)</td><td class="bad">gpt-4</td><td>Very dated</td><td class="good">GPT-5.4 / 5.4-mini</td></tr>
+      <tr><td>Google Gemini</td><td class="good">gemini-2.5-flash ✓</td><td class="good">Fixed (was 404)</td><td>GEMINI_MODEL env-overridable</td></tr>
+      <tr><td>OpenAI (vision)</td><td class="good">gpt-5.4 ✓</td><td class="good">Refreshed, official SDK</td><td>OPENAI_VISION_MODEL env</td></tr>
+      <tr><td>OpenAI (solve)</td><td class="good">gpt-5.4 ✓</td><td class="good">Refreshed, official SDK</td><td>OPENAI_SOLVE_MODEL env</td></tr>
       <tr><td>Anthropic Claude</td><td>—</td><td>Not integrated</td><td class="good">claude-haiku-4-5 / opus-4-8</td></tr>
     </tbody>
   </table>
@@ -320,8 +324,8 @@
       <p>§1 in full — toolbar modes, Fabric-native select/transform, shape beautifier (line/arrow/rect/ellipse), the Off/Manual/Auto setting. Self-contained, doesn't touch the AI layer, and leaves equation OCR safe by default.</p>
     </li>
     <li>
-      <h4>Unbreak &amp; modernize the AI layer <span style="color:var(--amber)">◐ in progress</span></h4>
-      <p>✓ Gemini fixed (§3.1). Remaining: refresh OpenAI (§3.2), build the provider abstraction (§3.4) to remove the duplicated endpoints.</p>
+      <h4>Unbreak &amp; modernize the AI layer <span style="color:var(--green)">✓ done</span></h4>
+      <p>✓ Gemini fixed (§3.1), OpenAI refreshed to gpt-5.4 via the official SDK (§3.2), unified <code>/extract</code> + <code>providers/</code> interface (§3.4).</p>
     </li>
     <li>
       <h4>Harden config &amp; clean up <span style="color:var(--amber)">◐ in progress</span></h4>

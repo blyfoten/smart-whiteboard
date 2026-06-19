@@ -81,12 +81,13 @@ export async function extractEquation() {
   try {
     appendOutput(`<b>Extracting equation from canvas</b><br><i>Using model: ${model}</i><br><i>Processing...</i>`);
 
-    const endpoint = model === 'gemini' ? '/extract-equation-gemini' : '/extract-equation';
+    // Unified endpoint; map the UI model to a vision provider (math/gpt → openai).
+    const provider = model === 'gemini' ? 'gemini' : 'openai';
 
-    const response = await fetch(endpoint, {
+    const response = await fetch('/extract', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: croppedDataURL }),
+      body: JSON.stringify({ image: croppedDataURL, provider }),
     });
     const data = await response.json();
 

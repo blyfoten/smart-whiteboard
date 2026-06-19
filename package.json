@@ -23,7 +23,8 @@
     "express": "^4.21.0",
     "fabric": "^6.4.2",
     "formidable": "^3.5.1",
-    "mathjs": "^13.1.1"
+    "mathjs": "^13.1.1",
+    "openai": "^6.44.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
