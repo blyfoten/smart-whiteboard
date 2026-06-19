@@ -25,12 +25,12 @@ A single-page whiteboard app: draw a handwritten equation, an AI vision model re
 ### Backend — `server.js` (Express, single file)
 
 Four POST endpoints:
-- `/extract-equation` — OpenAI **gpt-4o** vision. Takes a base64 image, returns `{ dependentVariable, expression, scope, ranges }` for math.js.
-- `/extract-equation-gemini` — same contract via Google **gemini-2.0-flash** (includes markdown-fence stripping since Gemini wraps JSON in code blocks).
-- `/solve` — text equation solver, dispatched by a `model` field: `'math'` (mathjs, local), `'gpt'` (gpt-4), `'gemini'` (gemini-2.0-flash).
+- `/extract-equation` — OpenAI **gpt-4o** vision (raw `axios`). Takes a base64 image, returns `{ dependentVariable, expression, scope, ranges }` for math.js.
+- `/extract-equation-gemini` — same contract via Google **Gemini** using the **`@google/genai`** SDK with `responseMimeType: 'application/json'` (so no markdown-fence stripping is needed; a brace-substring fallback remains as defense).
+- `/solve` — text equation solver, dispatched by a `model` field: `'math'` (mathjs, local), `'gpt'` (gpt-4, `axios`), `'gemini'` (`@google/genai`).
 - `/graph` — pure math.js: compiles `expression`, samples 100 points over the first variable's range, returns `[{x, y}]`.
 
-Model names are hardcoded in `server.js`. Both extract endpoints share the same prompt/JSON schema and validation logic (duplicated, not factored out).
+The Gemini model is **`GEMINI_MODEL`** (env-overridable, default `gemini-2.5-flash`; `gemini-2.0-flash` was shut down 2026-06-01). OpenAI model names are still hardcoded in `server.js`. The three billable endpoints (`/extract-equation`, `/extract-equation-gemini`, `/solve`) share an in-memory per-IP `aiLimiter` (30 req/min). Missing API keys are warned about at startup (and `genAI` is `null` when `GEMINI_API_KEY` is absent, so the server still boots). Both extract endpoints still duplicate their prompt/validation logic (not yet factored out — see plan §3.4).
 
 ### Frontend — ES modules in `src/`, bundled by webpack
 

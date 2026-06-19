@@ -6,14 +6,52 @@ const math = require('mathjs');
 const cors = require('cors');
 const path = require('path');
 const axios = require('axios');
-// Import the Google AI library (will need to be installed using npm)
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+// Google Gen AI SDK (replaces the deprecated, end-of-life @google/generative-ai).
+const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize the Gemini API client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Model IDs are centralized here (and overridable via env) so swapping models is
+// a one-line change. gemini-2.0-flash was shut down on 2026-06-01; gemini-2.5-flash
+// is the GA replacement. Set GEMINI_MODEL=gemini-3.5-flash for the newer model.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+// Initialize the Gemini API client (null when no key, so the server still boots
+// and only Gemini requests fail — not the whole process).
+const genAI = process.env.GEMINI_API_KEY
+    ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+    : null;
+
+// Warn loudly at startup instead of failing opaquely at request time.
+if (!process.env.OPENAI_API_KEY) console.warn('⚠️  OPENAI_API_KEY is not set — OpenAI (gpt) requests will fail.');
+if (!process.env.GEMINI_API_KEY) console.warn('⚠️  GEMINI_API_KEY is not set — Gemini requests will fail.');
+
+// Minimal in-memory per-IP rate limiter for the billable AI endpoints. Not a
+// substitute for real auth — just a guard so a public instance can't be trivially
+// drained of API credits.
+function rateLimit({ windowMs, max }) {
+    const hits = new Map();
+    setInterval(() => {
+        const cutoff = Date.now() - windowMs;
+        for (const [ip, rec] of hits) if (rec.start < cutoff) hits.delete(ip);
+    }, windowMs).unref();
+    return (req, res, next) => {
+        const ip = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
+        const now = Date.now();
+        let rec = hits.get(ip);
+        if (!rec || now - rec.start > windowMs) {
+            rec = { start: now, count: 0 };
+            hits.set(ip, rec);
+        }
+        rec.count++;
+        if (rec.count > max) {
+            return res.status(429).json({ success: false, message: 'Rate limit exceeded — please slow down.' });
+        }
+        next();
+    };
+}
+const aiLimiter = rateLimit({ windowMs: 60 * 1000, max: 30 });
 
 // Middleware
 app.use(bodyParser.json({ limit: '10mb' })); // Increase size limit for large images
@@ -50,45 +88,40 @@ async function solveEquationWithGPT(equation) {
 
 // Function to solve equation with Gemini API
 async function solveEquationWithGemini(equation) {
+    if (!genAI) {
+        console.error('solveEquationWithGemini: Gemini is not configured (missing GEMINI_API_KEY).');
+        return null;
+    }
     try {
         console.log(`Solving equation with Gemini: ${equation}`);
-        
-        // Get the model
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-        
-        // Create a more specific prompt
+
         const prompt = `You are a mathematical assistant. Solve the equation: ${equation}
 
 Please provide a clear, concise solution. Don't use markdown formatting in your response.
 Simply start with "The solution is:" followed by the answer.`;
-        
-        // Generate content
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let solution = response.text();
-        
+
+        const result = await genAI.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: prompt,
+        });
+        let solution = (result.text || '').trim();
+
         console.log(`Raw Gemini solution response: ${solution}`);
-        
+
         // Extract just the solution part if it follows our format
-        if (solution.includes("The solution is:")) {
-            solution = solution.split("The solution is:")[1].trim();
-            console.log(`Extracted solution: ${solution}`);
-        } else {
-            console.log(`Solution format not found, using full response`);
+        if (solution.includes('The solution is:')) {
+            solution = solution.split('The solution is:')[1].trim();
         }
-        
+
         return solution;
     } catch (error) {
         console.error('Error in solveEquationWithGemini:', error);
-        if (error.response) {
-            console.error('Gemini API response error:', error.response);
-        }
         return null;
     }
 }
 
 // API endpoint to extract equation from canvas
-app.post('/extract-equation', async (req, res) => {
+app.post('/extract-equation', aiLimiter, async (req, res) => {
     const { image } = req.body;
 
     if (!image) {
@@ -201,7 +234,7 @@ If you cannot interpret the equation, return exactly:
 });
 
 // API endpoint to solve equations with selected model
-app.post('/solve', async (req, res) => {
+app.post('/solve', aiLimiter, async (req, res) => {
     const { equation, model = 'math' } = req.body;
     console.log(`===== SOLVE REQUEST =====`);
     console.log(`Equation: "${equation}"`);
@@ -251,60 +284,51 @@ app.post('/solve', async (req, res) => {
 });
 
 // Add a new endpoint for extracting equation with Gemini
-app.post('/extract-equation-gemini', async (req, res) => {
+app.post('/extract-equation-gemini', aiLimiter, async (req, res) => {
     const { image } = req.body;
 
     if (!image) {
         return res.json({ success: false, message: 'No image received.' });
     }
+    if (!genAI) {
+        return res.json({ success: false, message: 'Gemini is not configured on the server.' });
+    }
 
     try {
-        // Initialize Gemini model - removing the unsupported responseSchema
-        const model = genAI.getGenerativeModel({ 
-            model: "gemini-2.0-flash"
-        });
-        
-        // Prepare the prompt with system instructions
+        // System instructions describing the exact JSON contract for math.js.
         const systemPrompt = `You are an AI specialized in interpreting handwritten mathematical equations from images and converting them into structured JSON suitable for math.js.
 
-Your task is to analyze the image and extract the mathematical equation, then return a properly structured JSON response.
-
-IMPORTANT REQUIREMENTS:
-1. Return ONLY valid JSON without any markdown formatting, explanatory text, or code blocks
-2. Do not include backticks (\`\`\`) or "json" tags around your response
-3. Ensure all JSON is properly formatted and can be parsed with JSON.parse()
-
-The JSON must follow this schema exactly:
+Analyze the image, extract the mathematical equation, and return JSON with this schema exactly:
 {
-  "dependentVariable": "string", // Variable on the left side of the equation (e.g., "y")
-  "expression": "string",        // Right side of the equation in math.js format (e.g., "x^2 + 3*x")
-  "scope": {                     // Sample values for each variable
-    "variableName": number       // e.g., "x": 0
-  },
-  "ranges": {                    // Min/max values for plotting each variable
-    "variableName": [number, number] // e.g., "x": [-10, 10]
-  }
+  "dependentVariable": "string", // Variable on the left side (e.g., "y")
+  "expression": "string",        // Right side in math.js format (e.g., "x^2 + 3*x")
+  "scope": { "variableName": number },           // sample value per variable, e.g. {"x": 0}
+  "ranges": { "variableName": [number, number] } // min/max per variable, e.g. {"x": [-10, 10]}
 }
-
-Example of good response:
-{"dependentVariable":"y","expression":"x^2+3*x-5","scope":{"x":0},"ranges":{"x":[-10,10]}}
 
 If you cannot interpret the equation, return exactly:
 {"error": "Unable to interpret the handwritten equation. Please ensure the handwriting is clear."}`;
 
-        // Convert base64 image to parts for Gemini
-        const imageData = image.split(',')[1]; // Remove the data:image/png;base64, part
-        const imagePart = {
-            inlineData: {
-                data: imageData,
-                mimeType: "image/png"
-            }
-        };
-        
-        // Generate content
-        const result = await model.generateContent([systemPrompt, imagePart]);
-        const response = await result.response;
-        const content = response.text();
+        // Parse the data URL so we send the correct mime type. The canvas exports
+        // JPEG; the old code hardcoded image/png.
+        const dataUrlMatch = /^data:(.+?);base64,(.*)$/s.exec(image);
+        const mimeType = dataUrlMatch ? dataUrlMatch[1] : 'image/jpeg';
+        const imageData = dataUrlMatch ? dataUrlMatch[2] : image.split(',')[1];
+
+        // responseMimeType forces raw JSON, so no markdown-fence stripping needed
+        // (the cleanup below stays only as a defensive fallback).
+        const result = await genAI.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: [
+                { inlineData: { mimeType, data: imageData } },
+                { text: 'Extract the equation from this image as JSON.' },
+            ],
+            config: {
+                systemInstruction: systemPrompt,
+                responseMimeType: 'application/json',
+            },
+        });
+        const content = (result.text || '').trim();
 
         // Extract JSON from Markdown-formatted response if needed
         let jsonString = content;

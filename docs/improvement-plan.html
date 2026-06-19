@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.4)</title>
+<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.5)</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -101,11 +101,11 @@
 
   <header class="hero">
     <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
-    <div class="sub">Draft v0.4 · 2026-06-18 · §1 (smart shapes + selection) now implemented; voice mode &amp; AI modernization still ahead</div>
+    <div class="sub">Draft v0.5 · 2026-06-18 · §1 (smart shapes) + §3.1 (Gemini unbroken) shipped; voice mode &amp; further AI modernization ahead</div>
     <div class="draft-note">
-      🛠️ <strong>Living sketch — iterate freely.</strong> v0.4: <strong>§1 smart shapes + selection is built &amp; on this branch</strong>
-      (Draw/Select/Shapes modes, Fabric-native transforms, a tested line/arrow/rect/ellipse recognizer, and the
-      Off/Manual/Auto setting). Next up: §3.1 (unbreak the dead Gemini path), then the voice mode (§2).
+      🛠️ <strong>Living sketch — iterate freely.</strong> v0.5: <strong>§3.1 (Gemini) is fixed</strong> — migrated to the
+      <code>@google/genai</code> SDK on <code>gemini-2.5-flash</code>, plus a per-IP rate limiter and startup key warnings (part of §4.1).
+      v0.4 shipped <strong>§1 smart shapes + selection</strong>. Next: OpenAI refresh (§3.2) + provider abstraction (§3.4), then the voice mode (§2).
       <span class="badge decided" style="margin-left:4px">green = decided</span>
       <span class="badge open">amber = open question</span>
     </div>
@@ -229,13 +229,16 @@
 
   <div class="card">
     <h3>3.1 — Gemini path is broken in production</h3>
-    <div class="badges"><span class="badge p-now">Broken now</span></div>
-    <p class="now">Now: <code>server.js</code> calls <code>gemini-2.0-flash</code> via the deprecated <code>@google/generative-ai</code> SDK.</p>
-    <p>Google <strong>shut down Gemini 2.0 Flash on June 1, 2026</strong> — those requests now return <code>404</code>; the "Gemini" option is dead.</p>
+    <div class="badges"><span class="badge decided">✓ shipped</span></div>
+    <p class="now">Was: <code>server.js</code> called the shut-down <code>gemini-2.0-flash</code> via the deprecated <code>@google/generative-ai</code> SDK → <code>404</code>, "Gemini" option dead.</p>
     <ul>
-      <li>Migrate to <strong>Gemini 3.5 Flash</strong> (GA, fast/cheap) or <strong>Gemini 3 Pro</strong>; move to the GA <code>@google/genai</code> SDK.</li>
-      <li>Use native structured-output / JSON-schema responses instead of regexing JSON out of a markdown fence.</li>
+      <li>✅ Migrated to the GA <code>@google/genai</code> SDK on <code>gemini-2.5-flash</code> (env-overridable via <code>GEMINI_MODEL</code>; flip to <code>gemini-3.5-flash</code> with no code change).</li>
+      <li>✅ Uses <code>responseMimeType: 'application/json'</code> for structured output — the markdown-fence regex is now just a defensive fallback.</li>
+      <li>✅ Correct image mime type (was hardcoded <code>image/png</code> while the canvas exports JPEG).</li>
     </ul>
+    <div class="qbox" style="border-left-color:var(--amber); background:rgba(251,191,36,0.06)">
+      ⚙️ <strong>Deploy note:</strong> adds the <code>@google/genai</code> dependency — run <code>npm install</code> once on the host (the git watcher doesn't), then restart <code>npm run dev</code>.
+    </div>
   </div>
 
   <div class="card">
@@ -282,11 +285,11 @@
 
   <div class="card">
     <h3>4.1 — Validate API keys at startup; tighten requests</h3>
-    <div class="badges"><span class="badge p-high">High</span></div>
+    <div class="badges"><span class="badge decided">partly shipped</span><span class="badge p-high">High</span></div>
     <ul>
-      <li>Fail fast (or visibly disable a provider) when its key is missing, instead of opaque request-time errors.</li>
-      <li>Lock down wide-open CORS; add rate limiting on the billable AI endpoints; trim verbose <code>console.log</code> of raw responses.</li>
-      <li>Address the <strong>57 Dependabot vulnerabilities</strong> flagged on the default branch.</li>
+      <li>✅ Startup warnings when a provider key is missing; <code>genAI</code> is <code>null</code> without a key so the server still boots.</li>
+      <li>✅ Per-IP in-memory rate limiter (30 req/min) on the three billable endpoints — a basic guard for the public instance (not real auth).</li>
+      <li>Still TODO: lock down wide-open CORS; trim verbose <code>console.log</code> of raw responses; address the <strong>57 Dependabot vulnerabilities</strong> on the default branch.</li>
     </ul>
   </div>
 
@@ -316,12 +319,12 @@
       <p>§1 in full — toolbar modes, Fabric-native select/transform, shape beautifier (line/arrow/rect/ellipse), the Off/Manual/Auto setting. Self-contained, doesn't touch the AI layer, and leaves equation OCR safe by default.</p>
     </li>
     <li>
-      <h4>Unbreak &amp; modernize the AI layer</h4>
-      <p>Fix Gemini (§3.1), refresh OpenAI (§3.2), build the provider abstraction (§3.4). Restores full functionality and removes duplicated endpoints.</p>
+      <h4>Unbreak &amp; modernize the AI layer <span style="color:var(--amber)">◐ in progress</span></h4>
+      <p>✓ Gemini fixed (§3.1). Remaining: refresh OpenAI (§3.2), build the provider abstraction (§3.4) to remove the duplicated endpoints.</p>
     </li>
     <li>
-      <h4>Harden config &amp; clean up</h4>
-      <p>Key validation, CORS/rate-limit/log hygiene, dep vulns (§4.1); de-duplicate button wiring (§4.2).</p>
+      <h4>Harden config &amp; clean up <span style="color:var(--amber)">◐ in progress</span></h4>
+      <p>✓ Key warnings + rate limiter (§4.1). Remaining: CORS lockdown, log hygiene, dep vulns; de-duplicate button wiring (§4.2).</p>
     </li>
     <li>
       <h4>Conversational voice mode</h4>
