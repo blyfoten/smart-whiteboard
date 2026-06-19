@@ -20,24 +20,34 @@ function handleCommand(command) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  const canvas = getCanvas();
+  const status = document.getElementById('status');
+  try {
+    const canvas = getCanvas();
 
-  if (canvas) {
-    resizeCanvas(canvas);
-    window.addEventListener('resize', () => resizeCanvas(canvas));
-    addReadyIndicator(canvas);
-    setupCanvasEventListeners();
-    initModes(canvas);
-  } else {
-    console.error('Failed to initialize canvas');
+    if (canvas) {
+      resizeCanvas(canvas);
+      window.addEventListener('resize', () => resizeCanvas(canvas));
+      addReadyIndicator(canvas);
+      setupCanvasEventListeners();
+      initModes(canvas);
+    } else {
+      throw new Error('getCanvas() returned null — Fabric canvas not initialized.');
+    }
+
+    initializeSpeechRecognition(handleCommand);
+    initializeModelSelectionUI();
+    initializeEventListeners();
+    initOutputPanel();
+
+    // Expose globals for HTML inline usage
+    window.getCanvas = getCanvas;
+    window.solveEquation = solveEquation;
+  } catch (err) {
+    // Surface init failures instead of leaving a silently-dead page.
+    console.error('Initialization error:', err);
+    if (status) {
+      status.textContent = 'Init error: ' + (err && err.message ? err.message : err);
+      status.style.color = 'red';
+    }
   }
-
-  initializeSpeechRecognition(handleCommand);
-  initializeModelSelectionUI();
-  initializeEventListeners();
-  initOutputPanel();
-
-  // Expose globals for HTML inline usage
-  window.getCanvas = getCanvas;
-  window.solveEquation = solveEquation;
 });

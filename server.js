@@ -28,6 +28,43 @@ function ensureDependencies() {
 }
 ensureDependencies();
 
+// The git watcher pulls but doesn't rebuild the webpack bundle. If webpack
+// --watch isn't running, the served bundle goes stale. Rebuild it on startup
+// when any src/*.js is newer than public/dist/bundle.js. Disable with NO_AUTO_BUILD=1.
+function ensureBundle() {
+    if (process.env.NO_AUTO_BUILD) return;
+    const fs = require('fs');
+    const path = require('path');
+    const bundlePath = path.join(__dirname, 'public', 'dist', 'bundle.js');
+    const srcDir = path.join(__dirname, 'src');
+    let bundleMtime = 0;
+    try {
+        bundleMtime = fs.statSync(bundlePath).mtimeMs;
+    } catch (e) {
+        bundleMtime = 0; // missing bundle
+    }
+    let newestSrc = 0;
+    try {
+        for (const f of fs.readdirSync(srcDir)) {
+            if (f.endsWith('.js')) {
+                const m = fs.statSync(path.join(srcDir, f)).mtimeMs;
+                if (m > newestSrc) newestSrc = m;
+            }
+        }
+    } catch (e) {
+        return; // no src dir — nothing to build
+    }
+    if (bundleMtime && bundleMtime >= newestSrc) return; // up to date
+    console.warn('📦 Bundle missing or stale — running npm run build...');
+    try {
+        require('child_process').execSync('npm run build', { cwd: __dirname, stdio: 'inherit' });
+        console.warn('📦 Bundle build complete.');
+    } catch (e) {
+        console.error('📦 Auto build failed:', e.message);
+    }
+}
+ensureBundle();
+
 const express = require('express');
 const bodyParser = require('body-parser');
 const math = require('mathjs');
