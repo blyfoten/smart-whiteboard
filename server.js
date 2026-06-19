@@ -225,10 +225,14 @@ app.post('/graph', (req, res) => {
 });
 
 // Start the server with port fallback
+const http = require('http');
+const { attachVoiceServer } = require('./voice-server');
 const HOST = process.env.HOST || '0.0.0.0';
 
 function startServer(port) {
-    app.listen(port, HOST)
+    const server = http.createServer(app);
+    attachVoiceServer(server); // WebSocket relay for the Gemini Live voice mode
+    server
         .on('error', (err) => {
             if (err.code === 'EADDRINUSE') {
                 console.log(`Port ${port} is already in use, trying port ${port + 1}...`);
@@ -240,6 +244,7 @@ function startServer(port) {
         .on('listening', () => {
             console.log(`Server running on http://${HOST}:${port}`);
         });
+    server.listen(port, HOST);
 }
 
 // Start the server with initial port

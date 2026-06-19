@@ -71,6 +71,8 @@
       border-color: #3a7bc8;
     }
     .mode-btn.active:hover { background-color: #3a7bc8; }
+    #voice-btn.active { background-color: #e53935; color: #fff; border-color: #c62828; }
+    #voice-btn.active:hover { background-color: #c62828; }
     #smart-shapes-container { display: flex; align-items: center; gap: 4px; font-size: 13px; }
     #test-section {
       display: flex;
@@ -176,6 +178,7 @@
         <button id="mode-select" class="mode-btn" title="Select & move (or hold Space)">⬚ Select</button>
         <button id="mode-shapes" class="mode-btn" title="Draw shapes that snap clean">◇ Shapes</button>
       </div>
+      <button id="voice-btn" title="Conversational voice mode (Gemini Live)">🎤 Voice</button>
       <button id="start-record-btn">Start Voice Recognition</button>
       <button id="extract-eq-btn">Extract Equation</button>
       <button id="solve-eq-btn">Solve Equation</button>

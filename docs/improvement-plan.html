@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.8)</title>
+<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.9)</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -101,9 +101,9 @@
 
   <header class="hero">
     <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
-    <div class="sub">Draft v0.8 · 2026-06-18 · §1 shapes, all of §3, and §4 hardening (CORS, dedup, deps) shipped; voice mode (§2) is the next big item</div>
+    <div class="sub">Draft v0.9 · 2026-06-18 · §2 voice mode — first end-to-end slice shipped (Gemini Live relay + client). Needs HTTPS to use the mic.</div>
     <div class="draft-note">
-      🛠️ <strong>Living sketch — iterate freely.</strong> v0.8: <strong>§4 hardening shipped</strong> — CORS locked down, the inline-script button wiring de-duplicated into the bundle (§4.2), dead <code>axios</code> removed, and dependency vulns cut from 26 → 4 (mathjs patched; the rest is fabric’s native build-time chain). Earlier: §1 shapes and all of §3. <strong>Next: the conversational voice mode (§2).</strong>
+      🛠️ <strong>Living sketch — iterate freely.</strong> v0.9: <strong>§2 voice mode — first slice shipped.</strong> A 🎤 Voice toggle streams mic audio + whiteboard video to a server-side Gemini Live relay and plays back the model’s spoken replies. ⚠️ Browsers only allow the mic on <b>https://</b> or localhost — the plain-HTTP preview can’t use it yet. Earlier: §1 shapes, all of §3, §4 hardening.
       <span class="badge decided" style="margin-left:4px">green = decided</span>
       <span class="badge open">amber = open question</span>
     </div>
@@ -182,10 +182,13 @@
     being drawn as you say "make this steeper") and can ask clarifying questions in sync. A big step up from today's
     one-shot <code>webkitSpeechRecognition</code> (hardcoded to <code>sv-SE</code>). Larger, separate workstream from §1.
   </p>
+  <div class="qbox" style="border-left-color:var(--green); background:rgba(74,222,128,0.07)">
+    ✅ <strong>First end-to-end slice on this branch.</strong> Server-side WebSocket relay (<code>voice-server.js</code>, key stays server-side) to a Gemini Live session, and a client <code>src/voice.js</code> behind a 🎤 Voice toggle that streams 16kHz mic PCM + ~1fps whiteboard JPEG frames and plays back 24kHz audio replies; transcripts go to the output panel. <strong>⚠️ Requires HTTPS</strong> (mic blocked on plain http). Live model is <code>GEMINI_LIVE_MODEL</code> (default <code>gemini-live-2.5-flash-native-audio</code>).
+  </div>
 
   <div class="card">
     <h3>2.1 — Realtime multimodal live session</h3>
-    <div class="badges"><span class="badge p-med">Medium</span><span class="badge effort">bigger bet</span><span class="badge decided">provider chosen</span></div>
+    <div class="badges"><span class="badge decided">✓ shipped (v1)</span><span class="badge effort">bigger bet</span></div>
     <p class="now">Now: <code>speech.js</code> does single-utterance recognition, locale-locked to Swedish, no spoken responses, no vision.</p>
     <ul>
       <li><strong>Lead provider: Google Gemini Live API.</strong> Purpose-built to ingest continuous <strong>synchronized</strong> audio + video + text on one <code>realtimeInput</code> stream, explicitly avoiding cross-modality temporal misalignment. Native-audio live model family (e.g. <code>gemini-live-2.5-flash-native-audio</code> — confirm the current ID at build time).</li>
@@ -196,7 +199,7 @@
 
   <div class="card">
     <h3>2.2 — Stream the whiteboard as live video, in sync with audio</h3>
-    <div class="badges"><span class="badge p-med">Medium</span><span class="badge decided">approach decided</span></div>
+    <div class="badges"><span class="badge decided">✓ shipped (v1)</span></div>
     <p>This is the core ask: the board is <strong>streamed as video into the model</strong> alongside the mic, not fed as periodic stills.</p>
     <ul>
       <li><strong>Board → video:</strong> <code>canvasElement.captureStream(1)</code> yields a live <code>MediaStream</code> of the Fabric canvas — no screen recording. Downscale frames to <strong>≤768×768</strong> at <strong>~1 FPS</strong> (Gemini Live's recommended envelope; plenty for a whiteboard).</li>
@@ -207,7 +210,7 @@
 
   <div class="card">
     <h3>2.3 — Key security &amp; cost gating</h3>
-    <div class="badges"><span class="badge p-high">High</span></div>
+    <div class="badges"><span class="badge decided">✓ key server-side</span><span class="badge p-med">cost gating TODO</span></div>
     <ul>
       <li>Never expose the Gemini key in the browser — proxy the Live session through the existing Express server (WebSocket relay) or mint ephemeral tokens.</li>
       <li>Continuous video is the cost driver: only stream while voice mode is active; pause frames when the board is idle.</li>

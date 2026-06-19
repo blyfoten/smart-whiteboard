@@ -5,6 +5,7 @@ import { initializeSpeechRecognition } from './speech.js';
 import { initializeModelSelectionUI, setupCanvasEventListeners, initializeEventListeners } from './ui.js';
 import { initModes } from './modes.js';
 import { initOutputPanel } from './output.js';
+import { initVoice } from './voice.js';
 import { solveEquation } from './api.js';
 
 function handleCommand(command) {
@@ -38,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeModelSelectionUI();
     initializeEventListeners();
     initOutputPanel();
+    initVoice();
 
     // Expose globals for HTML inline usage
     window.getCanvas = getCanvas;
