@@ -58,6 +58,11 @@ app.use(bodyParser.json({ limit: '10mb' })); // Increase size limit for large im
 app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Serve the living improvement/feature plan at /plan
+app.get('/plan', (req, res) => {
+    res.sendFile(path.join(__dirname, 'docs', 'improvement-plan.html'));
+});
+
 // Function to solve equation with GPT API
 async function solveEquationWithGPT(equation) {
     try {
