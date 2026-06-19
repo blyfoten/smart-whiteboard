@@ -17,6 +17,7 @@ const PORT = process.env.PORT || 3000;
 // Warn loudly at startup instead of failing opaquely at request time.
 if (!process.env.OPENAI_API_KEY) console.warn('⚠️  OPENAI_API_KEY is not set — OpenAI (gpt) requests will fail.');
 if (!process.env.GEMINI_API_KEY) console.warn('⚠️  GEMINI_API_KEY is not set — Gemini requests will fail.');
+if (!process.env.ANTHROPIC_API_KEY) console.warn('⚠️  ANTHROPIC_API_KEY is not set — Claude requests will fail.');
 
 // Minimal in-memory per-IP rate limiter for the billable AI endpoints. Not a
 // substitute for real auth — just a guard so a public instance can't be trivially

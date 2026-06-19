@@ -25,12 +25,12 @@ A single-page whiteboard app: draw a handwritten equation, an AI vision model re
 ### Backend — `server.js` (Express, single file)
 
 POST endpoints:
-- `/extract` — unified vision extraction; body `{ image, provider }` where `provider` ∈ `openai` | `gemini`. Returns `{ dependentVariable, expression, scope, ranges }` for math.js. `/extract-equation` and `/extract-equation-gemini` remain as thin back-compat aliases (→ `openai` / `gemini`).
-- `/solve` — text equation solver, dispatched by a `model` field: `'math'` (mathjs, local), `'gpt'` (OpenAI), `'gemini'`.
+- `/extract` — unified vision extraction; body `{ image, provider }` where `provider` ∈ `openai` | `gemini` | `claude`. Returns `{ dependentVariable, expression, scope, ranges }` for math.js. `/extract-equation` and `/extract-equation-gemini` remain as thin back-compat aliases (→ `openai` / `gemini`).
+- `/solve` — text equation solver, dispatched by a `model` field: `'math'` (mathjs, local), `'gpt'` (OpenAI), `'gemini'`, `'claude'`.
 - `/graph` — pure math.js: compiles `expression`, samples 100 points over the first variable's range, returns `[{x, y}]`.
 - `/plan` — serves `docs/improvement-plan.html`.
 
-Providers live behind a small interface in **`providers/`**: `openai.js` and `gemini.js` each implement `isConfigured()` / `extract(image)` / `solve(equation)`; `schema.js` holds the shared system prompt + `validateExtraction`; `index.js` is the registry (`get('gpt'|'openai'|'gemini')`). Model IDs are env-overridable — `OPENAI_VISION_MODEL` / `OPENAI_SOLVE_MODEL` (default `gpt-5.4`, official `openai` SDK) and `GEMINI_MODEL` (default `gemini-2.5-flash`, `@google/genai`; `gemini-2.0-flash` was shut down 2026-06-01). The three billable endpoints share an in-memory per-IP `aiLimiter` (30 req/min). Missing keys are warned at startup; each provider's client is `null` without its key, so the server still boots.
+Providers live behind a small interface in **`providers/`**: `openai.js`, `gemini.js`, and `claude.js` each implement `isConfigured()` / `extract(image)` / `solve(equation)`; `schema.js` holds the shared system prompt + `validateExtraction`; `index.js` is the registry (`get('gpt'|'openai'|'gemini'|'claude')`). Model IDs are env-overridable — `OPENAI_VISION_MODEL` / `OPENAI_SOLVE_MODEL` (default `gpt-5.4`, official `openai` SDK), `GEMINI_MODEL` (default `gemini-2.5-flash`, `@google/genai`; `gemini-2.0-flash` was shut down 2026-06-01), and `CLAUDE_VISION_MODEL` / `CLAUDE_SOLVE_MODEL` (default `claude-haiku-4-5`, `@anthropic-ai/sdk`). Keys: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`. The three billable endpoints share an in-memory per-IP `aiLimiter` (30 req/min). Missing keys are warned at startup; each provider's client is `null` without its key, so the server still boots.
 
 ### Frontend — ES modules in `src/`, bundled by webpack
 

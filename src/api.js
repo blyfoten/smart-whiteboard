@@ -82,7 +82,7 @@ export async function extractEquation() {
     appendOutput(`<b>Extracting equation from canvas</b><br><i>Using model: ${model}</i><br><i>Processing...</i>`);
 
     // Unified endpoint; map the UI model to a vision provider (math/gpt → openai).
-    const provider = model === 'gemini' ? 'gemini' : 'openai';
+    const provider = { gemini: 'gemini', claude: 'claude' }[model] || 'openai';
 
     const response = await fetch('/extract', {
       method: 'POST',

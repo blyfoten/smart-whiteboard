@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.6)</title>
+<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.7)</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -101,11 +101,10 @@
 
   <header class="hero">
     <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
-    <div class="sub">Draft v0.6 · 2026-06-18 · §1 shapes + the whole AI-layer modernization (§3.1/3.2/3.4) shipped; voice mode (§2) is the next big item</div>
+    <div class="sub">Draft v0.7 · 2026-06-18 · §1 shapes + all of §3 (Gemini fix, OpenAI refresh, provider abstraction, Claude) shipped; voice mode (§2) is the next big item</div>
     <div class="draft-note">
-      🛠️ <strong>Living sketch — iterate freely.</strong> v0.6: <strong>§3.2 + §3.4 shipped</strong> — OpenAI refreshed to <code>gpt-5.4</code>
-      via the official SDK, and both providers now sit behind a unified <code>/extract</code> endpoint + <code>providers/</code> interface.
-      Earlier: §3.1 Gemini fix, §4.1 rate-limit/key-warnings, §1 smart shapes. <strong>Next: the conversational voice mode (§2).</strong>
+      🛠️ <strong>Living sketch — iterate freely.</strong> v0.7: <strong>§3.3 shipped</strong> — Claude added as a third provider (<code>claude-haiku-4-5</code>) through the same <code>providers/</code> interface.
+      All of §3 (3.1 Gemini, 3.2 OpenAI, 3.3 Claude, 3.4 abstraction) is now done, plus §1 smart shapes and §4.1 rate-limit/key-warnings. <strong>Next: the conversational voice mode (§2).</strong>
       <span class="badge decided" style="margin-left:4px">green = decided</span>
       <span class="badge open">amber = open question</span>
     </div>
@@ -257,10 +256,14 @@
 
   <div class="card">
     <h3>3.3 — Add Claude as a provider option</h3>
-    <div class="badges"><span class="badge p-med">Medium</span><span class="badge effort">new capability</span></div>
-    <p>Strong handwriting vision + first-class structured outputs (<code>output_config.format</code>) mapping onto the
-    <code>{ dependentVariable, expression, scope, ranges }</code> contract. Official <code>@anthropic-ai/sdk</code>;
-    suggested <code>claude-haiku-4-5</code> (cheap/fast) or <code>claude-opus-4-8</code> for hardest handwriting.</p>
+    <div class="badges"><span class="badge decided">✓ shipped</span></div>
+    <ul>
+      <li>✅ <code>providers/claude.js</code> via the official <code>@anthropic-ai/sdk</code>, default <code>claude-haiku-4-5</code> (env-overridable to <code>claude-opus-4-8</code> for the hardest handwriting). Uses <code>ANTHROPIC_API_KEY</code>.</li>
+      <li>✅ Added to the registry and the model dropdown ("Claude (Advanced)") — extraction &amp; solving both routed through the unified <code>/extract</code> + <code>/solve</code> dispatch.</li>
+    </ul>
+    <div class="qbox" style="border-left-color:var(--amber); background:rgba(251,191,36,0.06)">
+      ⚙️ <strong>Deploy note:</strong> adds <code>@anthropic-ai/sdk</code> and needs <code>ANTHROPIC_API_KEY</code> in <code>.env</code>. <code>npm install</code> on the host once.
+    </div>
   </div>
 
   <div class="card">
@@ -280,7 +283,8 @@
       <tr><td>Google Gemini</td><td class="good">gemini-2.5-flash ✓</td><td class="good">Fixed (was 404)</td><td>GEMINI_MODEL env-overridable</td></tr>
       <tr><td>OpenAI (vision)</td><td class="good">gpt-5.4 ✓</td><td class="good">Refreshed, official SDK</td><td>OPENAI_VISION_MODEL env</td></tr>
       <tr><td>OpenAI (solve)</td><td class="good">gpt-5.4 ✓</td><td class="good">Refreshed, official SDK</td><td>OPENAI_SOLVE_MODEL env</td></tr>
-      <tr><td>Anthropic Claude</td><td>—</td><td>Not integrated</td><td class="good">claude-haiku-4-5 / opus-4-8</td></tr>
+      <tr><td>Anthropic Claude</td><td class="good">claude-haiku-4-5 ✓</td><td class="good">Added (3rd provider)</td><td>CLAUDE_VISION_MODEL env</td></tr>
+      
     </tbody>
   </table>
 
@@ -336,8 +340,8 @@
       <p>§2 — a single Gemini Live session streaming synchronized mic audio + whiteboard video (~1 FPS), with spoken clarifying questions, behind a server-side relay. Built on top of the clean provider layer.</p>
     </li>
     <li>
-      <h4>Claude provider + quality net</h4>
-      <p>Add Claude (§3.3), structured outputs everywhere, tests + lint + prod build (§4.3).</p>
+      <h4>Claude provider + quality net <span style="color:var(--amber)">◐ in progress</span></h4>
+      <p>✓ Claude provider added (§3.3). Remaining: tests + lint + prod build (§4.3).</p>
     </li>
   </ol>
 

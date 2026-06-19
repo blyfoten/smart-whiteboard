@@ -44,6 +44,7 @@ export function initializeModelSelectionUI() {
     { value: 'math', text: 'Math.js (Simple)' },
     { value: 'gpt', text: 'GPT (Advanced)' },
     { value: 'gemini', text: 'Gemini (Advanced)' },
+    { value: 'claude', text: 'Claude (Advanced)' },
   ].forEach(opt => {
     const o = document.createElement('option');
     o.value = opt.value;

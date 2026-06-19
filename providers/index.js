@@ -3,9 +3,10 @@
 
 const openai = require('./openai');
 const gemini = require('./gemini');
+const claude = require('./claude');
 const { validateExtraction } = require('./schema');
 
-// Accepts UI model names ('gpt', 'gemini') and canonical provider names.
+// Accepts UI model names ('gpt', 'gemini', 'claude') and canonical provider names.
 function get(name) {
     switch (name) {
         case 'openai':
@@ -13,6 +14,8 @@ function get(name) {
             return openai;
         case 'gemini':
             return gemini;
+        case 'claude':
+            return claude;
         default:
             return null;
     }
