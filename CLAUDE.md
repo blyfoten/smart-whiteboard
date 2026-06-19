@@ -12,11 +12,11 @@ npm start            # Run Express server (port 3000, auto-increments if taken)
 npm run dev          # webpack --watch in background + start server
 ```
 
-There is **no test runner and no linter** configured. `npm test` does nothing.
+`npm test` runs the pure stroke-classifier checks in `test/shape-classifier.test.mjs` (plain Node, no framework). There is no linter configured.
 
 **Critical:** the browser loads `public/dist/bundle.js`, which is the webpack output. Editing anything under `src/` has no effect until you `npm run build` (or run `npm run dev` for watch mode). Always rebuild after changing `src/`.
 
-Requires a `.env` file with `OPENAI_API_KEY` and `GEMINI_API_KEY` (see `.env.example`). Missing keys are not validated — calls just fail at request time.
+Requires a `.env` file with `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `ANTHROPIC_API_KEY` (see `.env.example`). On startup the server **auto-runs `npm install`** if a provider SDK is missing (handy with the git-pull watcher that doesn't install deps; disable with `NO_AUTO_INSTALL=1`).
 
 ## Architecture
 

@@ -1,5 +1,33 @@
 // server.js
 require('dotenv').config();
+
+// The git watcher pulls but does not run `npm install`. If a declared SDK is
+// missing (e.g. just added in a pulled commit), install dependencies before
+// continuing so providers come up without manual intervention. Runs once at
+// startup, only when something is actually missing. Disable with NO_AUTO_INSTALL=1.
+function ensureDependencies() {
+    if (process.env.NO_AUTO_INSTALL) return;
+    const required = ['openai', '@google/genai', '@anthropic-ai/sdk'];
+    const missing = required.filter((mod) => {
+        try {
+            require.resolve(mod);
+            return false;
+        } catch (e) {
+            return true;
+        }
+    });
+    if (missing.length === 0) return;
+    console.warn(`📦 Missing dependencies (${missing.join(', ')}) — running npm install...`);
+    try {
+        require('child_process').execSync('npm install', { cwd: __dirname, stdio: 'inherit' });
+        console.warn('📦 npm install complete.');
+    } catch (e) {
+        console.error('📦 Auto npm install failed:', e.message);
+        console.error('   Affected providers stay disabled until installed manually.');
+    }
+}
+ensureDependencies();
+
 const express = require('express');
 const bodyParser = require('body-parser');
 const math = require('mathjs');
