@@ -52,6 +52,28 @@ function arrowPts(a, b) {
   return [...shaft, ...line(b, h1, 8)];
 }
 
+// A rectangle with shaky (not perfectly straight) sides — an unsteady hand on a
+// touchscreen. The wobble oscillates along each side so it nets ~zero area
+// change, the way real shaky-but-straight strokes do.
+function wobblyRectPts(x, y, w, h, per = 22, bow = 9) {
+  const corners = [
+    [x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y],
+  ].map(([px, py]) => ({ x: px, y: py }));
+  const pts = [];
+  for (let i = 0; i < 4; i++) {
+    const a = corners[i], b = corners[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    const nx = -dy / len, ny = dx / len; // perpendicular
+    for (let j = 0; j <= per; j++) {
+      const t = j / per;
+      const off = Math.sin(t * Math.PI * 4) * bow; // oscillating wobble (net ~0)
+      pts.push({ x: jitter(a.x + dx * t + nx * off, 4), y: jitter(a.y + dy * t + ny * off, 4) });
+    }
+  }
+  return pts;
+}
+
 // ---- tests ----
 check('horizontal line → line', () => {
   const d = classifyStroke(line({ x: 40, y: 100 }, { x: 360, y: 108 }));
@@ -75,6 +97,16 @@ check('wide ellipse → ellipse', () => {
 
 check('rectangle → rect', () => {
   const d = classifyStroke(rectPts(60, 60, 240, 140));
+  assert.equal(d?.type, 'rect');
+});
+
+check('wobbly-sided rectangle → rect (not oval)', () => {
+  const d = classifyStroke(wobblyRectPts(60, 60, 240, 150));
+  assert.equal(d?.type, 'rect');
+});
+
+check('small square with shaky sides → rect', () => {
+  const d = classifyStroke(wobblyRectPts(100, 100, 110, 95, 16, 7));
   assert.equal(d?.type, 'rect');
 });
 

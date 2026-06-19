@@ -101,28 +101,71 @@ function fitEllipse(pts, bb) {
   return { cx, cy, rx, ry };
 }
 
-// A rectangle's points hug the bounding-box perimeter; an ellipse only touches
-// it at four points. Measure the fraction of points sitting in a thin band
-// along the bbox edges, and require all four sides to be represented.
-function isRectangle(pts, bb) {
-  if (bb.w < MIN_SIZE || bb.h < MIN_SIZE) return false;
-  // Tight band: rectangle points sit ~on the edges; a circle's only touch the
-  // bbox near the 4 cardinal points, so a wide band would misread it as a rect.
-  const band = 0.06 * Math.min(bb.w, bb.h) + 3;
-  let nearEdge = 0;
-  let left = 0, right = 0, top = 0, bottom = 0;
-  for (const p of pts) {
-    const dl = Math.abs(p.x - bb.minX);
-    const dr = Math.abs(p.x - bb.maxX);
-    const dt = Math.abs(p.y - bb.minY);
-    const db = Math.abs(p.y - bb.maxY);
-    if (Math.min(dl, dr, dt, db) <= band) nearEdge++;
-    if (dl <= band) left++;
-    if (dr <= band) right++;
-    if (dt <= band) top++;
-    if (db <= band) bottom++;
+// Magnitude of the turn between two consecutive direction vectors (0..π).
+function angleTurn(ax, ay, bx, by) {
+  const dot = ax * bx + ay * by;
+  const det = ax * by - ay * bx;
+  return Math.abs(Math.atan2(det, dot));
+}
+
+// Resample a polyline to n evenly-spaced points (normalizes point density).
+function resample(pts, n) {
+  const total = polylineLength(pts);
+  if (total === 0) return pts.slice(0, 1);
+  const step = total / (n - 1);
+  const out = [pts[0]];
+  let prev = pts[0];
+  let i = 1;
+  let acc = 0;
+  while (i < pts.length && out.length < n) {
+    const d = dist(prev, pts[i]);
+    if (d > 0 && acc + d >= step) {
+      const t = (step - acc) / d;
+      prev = { x: prev.x + (pts[i].x - prev.x) * t, y: prev.y + (pts[i].y - prev.y) * t };
+      out.push(prev);
+      acc = 0;
+    } else {
+      acc += d;
+      prev = pts[i];
+      i++;
+    }
   }
-  return nearEdge / pts.length > 0.85 && left > 0 && right > 0 && top > 0 && bottom > 0;
+  while (out.length < n) out.push(pts[pts.length - 1]);
+  return out;
+}
+
+// Cyclic 3-point moving average — damps hand jitter before corner detection.
+function smoothCyclic(pts) {
+  const n = pts.length;
+  return pts.map((_, i) => {
+    const a = pts[(i - 1 + n) % n], b = pts[i], c = pts[(i + 1) % n];
+    return { x: (a.x + b.x + c.x) / 3, y: (a.y + b.y + c.y) / 3 };
+  });
+}
+
+// Count sharp corners on a CLOSED stroke (treated cyclically): a rectangle
+// yields ~4, an ellipse 0. Robust to shaky sides and bbox-inflating spikes,
+// unlike edge-distance or area tests.
+function countCorners(pts) {
+  const n = 64;
+  const k = 4; // comparison window
+  const TH = (55 * Math.PI) / 180;
+  const rs = smoothCyclic(resample(pts, n));
+  const turn = rs.map((b, i) => {
+    const a = rs[(i - k + n) % n];
+    const c = rs[(i + k) % n];
+    return angleTurn(b.x - a.x, b.y - a.y, c.x - b.x, c.y - b.y);
+  });
+  let count = 0;
+  for (let i = 0; i < n; i++) {
+    if (turn[i] < TH) continue;
+    let isPeak = true;
+    for (let j = 1; j <= k; j++) {
+      if (turn[(i - j + n) % n] >= turn[i] || turn[(i + j) % n] > turn[i]) { isPeak = false; break; }
+    }
+    if (isPeak) count++;
+  }
+  return count;
 }
 
 // Arrow: a mostly-straight shaft from start to the farthest point, followed by
@@ -180,10 +223,11 @@ export function classifyStroke(pts) {
     return null;
   }
 
-  // Rectangle before ellipse: a clean ellipse simplifies to >4 corners, so the
-  // 4-corner test won't catch it; checking ellipse first would let a rectangle
-  // (whose points hug the bounding box) slip through the ellipse fit.
-  if (isRectangle(pts, bb)) {
+  // Corner count is the robust rect-vs-ellipse signal: a rectangle has ~4 sharp
+  // corners, an ellipse none — far more tolerant of shaky sides than an
+  // edge-distance or area test, which a single noisy spike throws off.
+  const corners = countCorners(pts);
+  if (corners >= 3 && corners <= 6) {
     return { type: 'rect', x: bb.minX, y: bb.minY, w: bb.w, h: bb.h };
   }
 
