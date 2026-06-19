@@ -13,6 +13,8 @@ let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
 let _canvas = null;
 
+const GHOST_OPACITY = 0.3;          // faded original stroke kept under the snapped shape
+
 export function getMode() {
   return _mode;
 }
@@ -70,9 +72,18 @@ function _onPathCreated(e) {
   });
   if (!result) return;
 
-  _canvas.remove(path);
+  // Keep the original freehand stroke as a faded "ghost" beneath the clean
+  // shape, so the difference between what was drawn and what was generated stays
+  // visible. (Tagged _isGhost; non-selectable so it doesn't block the shape.)
+  path.set({
+    selectable: false,
+    evented: false,
+    opacity: GHOST_OPACITY,
+    _isGhost: true,
+  });
+
   const { shape } = result;
-  shape.set({ selectable: true, evented: true, opacity: 0.5 });
+  shape.set({ selectable: true, evented: true, opacity: 0.5, _isShape: true });
   _canvas.add(shape);
   // Brief fade-in as a "snap" cue. Guarded so any animate API mismatch still
   // leaves the shape fully opaque rather than half-faded.

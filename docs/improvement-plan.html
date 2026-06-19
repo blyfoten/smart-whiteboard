@@ -158,7 +158,8 @@
     <p><strong>Beautify set (decided):</strong> straight lines · arrows · rectangles/squares · circles/ellipses.</p>
     <ul>
       <li>Lightweight geometric classifier (line-fit residuals; closed-vs-open; corner detection via Ramer–Douglas–Peucker; radial-variance for circles; hook-detection for arrows). No heavy gesture library — keeps deps minimal and gives direct "snap straight" control.</li>
-      <li>Right-angle / square snapping for rectangles; equal-axis snapping for circles.</li>
+      <li>Right-angle / square snapping for rectangles; equal-axis snapping for circles. Rectangle-vs-ellipse decided by corner counting (robust to shaky sides).</li>
+      <li>Keeps the original freehand stroke as a faded "ghost" (tag <code>_isGhost</code>) beneath the snapped shape, so drawn-vs-generated stays visible.</li>
     </ul>
   </div>
 
