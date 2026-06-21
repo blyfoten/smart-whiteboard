@@ -205,6 +205,7 @@ async function start() {
         setStatus('Voice: error — see output panel');
         break;
       case 'closed':
+        if (msg.message) appendToOutput(`<b>Voice session closed:</b> ${msg.message}`, true);
         setStatus('Voice: session closed');
         break;
       default:
