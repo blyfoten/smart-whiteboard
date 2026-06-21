@@ -40,16 +40,21 @@ const TOOLS = Type ? [{
     ],
 }] : null;
 
-// The Live model id differs by API provider. We try a list until one connects;
-// override with GEMINI_LIVE_MODEL to pin a specific one.
+// The Live model id differs by API provider, and tool/function calling is only
+// reliable on the "half-cascade" models (native-audio models reject tool calls
+// with "Operation is not implemented"). Try tool-capable half-cascade models
+// first so the drawing tools work; fall back to native-audio (nicer voice, but
+// no tools). Override with GEMINI_LIVE_MODEL to pin one.
 const CANDIDATE_MODELS = process.env.GEMINI_LIVE_MODEL
     ? [process.env.GEMINI_LIVE_MODEL]
     : [
-        'gemini-2.5-flash-native-audio-preview-12-2025',
+        'gemini-live-2.5-flash-preview',                  // half-cascade — strong tool calling
+        'gemini-2.0-flash-live-001',                      // half-cascade — tool calling
+        'gemini-2.5-flash-live-preview',                  // possible current half-cascade id
+        'gemini-3.1-flash-live-preview',                  // newest live model
+        'gemini-2.5-flash-native-audio-preview-12-2025',  // native audio (great voice, no tools)
         'gemini-2.5-flash-preview-native-audio-dialog',
         'gemini-live-2.5-flash-native-audio',
-        'gemini-live-2.5-flash-preview',
-        'gemini-2.0-flash-live-001',
     ];
 
 const SYSTEM_INSTRUCTION = `You are a friendly, concise voice tutor and drawing collaborator on a shared math whiteboard.
