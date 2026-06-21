@@ -14,6 +14,7 @@ let micStream = null;
 let processor = null;
 let sourceNode = null;
 let videoTimer = null;
+let hintShown = false;
 
 // Playback
 let playCtx = null;
@@ -122,6 +123,7 @@ function captureFrameBase64() {
 
 async function start() {
   if (active) return;
+  hintShown = false;
 
   // Browsers only expose the microphone on secure origins (https:// or localhost).
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -176,6 +178,17 @@ async function start() {
     switch (msg.type) {
       case 'ready':
         setStatus('🎤 Voice: listening — speak now');
+        if (!hintShown) {
+          hintShown = true;
+          appendToOutput(
+            '<b>🎤 Voice mode is on</b> — the assistant will greet you, then just talk. Try:<br>' +
+            '• "What do you see on the whiteboard?"<br>' +
+            '• "Solve x squared plus three x minus four."<br>' +
+            '• "Plot y equals x squared."<br>' +
+            '• (draw something) "What is this?" / "Is this a 7 or a 1?"<br>' +
+            '<i>Tap 🛑 Stop Voice to end.</i>'
+          );
+        }
         break;
       case 'audio':
         playPCM16Base64(msg.data);

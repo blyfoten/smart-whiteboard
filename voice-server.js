@@ -27,7 +27,8 @@ const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-live-2.5-flash-nativ
 const SYSTEM_INSTRUCTION = `You are a friendly, concise voice tutor looking at a shared math whiteboard.
 You can see the user's drawing (it streams to you as video) and hear them speak.
 Help them with equations and graphs. Keep spoken answers short and conversational.
-When the drawing is ambiguous (e.g. a digit you can't read), ask a brief clarifying question.`;
+When the drawing is ambiguous (e.g. a digit you can't read), ask a brief clarifying question.
+The very first message you receive will be the single word "BEGIN". When you see it, greet the user in one short sentence and invite them to draw a math problem or ask a question — and do not mention the word BEGIN.`;
 
 function attachVoiceServer(server) {
     if (!WebSocketServer) return; // ws unavailable
@@ -50,6 +51,14 @@ function attachVoiceServer(server) {
         const ai = new GoogleGenAI({ apiKey });
         let session = null;
 
+        // Make the model speak first so the user immediately hears it's working.
+        let greeted = false;
+        const greet = () => {
+            if (greeted || !session) return;
+            greeted = true;
+            try { session.sendRealtimeInput({ text: 'BEGIN' }); } catch (e) { /* noop */ }
+        };
+
         try {
             session = await ai.live.connect({
                 model: LIVE_MODEL,
@@ -62,7 +71,10 @@ function attachVoiceServer(server) {
                 callbacks: {
                     onopen: () => send({ type: 'ready' }),
                     onmessage: (msg) => {
-                        if (msg.setupComplete) send({ type: 'ready' });
+                        if (msg.setupComplete) {
+                            send({ type: 'ready' });
+                            greet();
+                        }
                         const sc = msg.serverContent;
                         if (!sc) return;
                         const parts = sc.modelTurn && sc.modelTurn.parts;
@@ -87,6 +99,8 @@ function attachVoiceServer(server) {
                     onclose: (e) => send({ type: 'closed', message: (e && e.reason) || '' }),
                 },
             });
+            // Fallback in case setupComplete fired during the await above.
+            greet();
         } catch (e) {
             send({ type: 'error', message: 'Failed to connect to Gemini Live: ' + (e.message || e) });
             browserWs.close();
