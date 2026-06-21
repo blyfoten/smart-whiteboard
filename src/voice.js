@@ -6,6 +6,7 @@
 
 import { getCanvas } from './canvas.js';
 import { appendToOutput } from './output.js';
+import { executeAction } from './canvas-actions.js';
 
 let active = false;
 let ws = null;
@@ -41,6 +42,26 @@ function appendTranscript(role, fragment) {
 function resetTranscript() {
   _transcriptRole = null;
   _transcriptEl = null;
+}
+
+// Execute assistant tool calls on the canvas and report results back so the
+// model knows they succeeded.
+async function handleToolCalls(calls) {
+  if (!Array.isArray(calls)) return;
+  const responses = [];
+  for (const call of calls) {
+    let result;
+    try {
+      result = await executeAction(call.name, call.args || {});
+    } catch (e) {
+      result = { error: (e && e.message) || String(e) };
+    }
+    responses.push({ id: call.id, name: call.name, result });
+    appendToOutput(`<i>🖊️ ${call.name}</i>`);
+  }
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'tool_response', responses }));
+  }
 }
 
 // Playback
@@ -226,6 +247,9 @@ async function start() {
         break;
       case 'text':
         appendTranscript(msg.role, msg.data);
+        break;
+      case 'tool_call':
+        handleToolCalls(msg.calls);
         break;
       case 'turn_complete':
         resetTranscript();

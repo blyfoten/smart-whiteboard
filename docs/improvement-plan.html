@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.9)</title>
+<title>Smart Whiteboard — Modernization &amp; Feature Plan (Draft v0.10)</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -101,7 +101,7 @@
 
   <header class="hero">
     <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
-    <div class="sub">Draft v0.9 · 2026-06-18 · §2 voice mode — first end-to-end slice shipped (Gemini Live relay + client). Needs HTTPS to use the mic.</div>
+    <div class="sub">Draft v0.10 · 2026-06-21 · §2 voice mode now a hands-on collaborator — it can draw, erase, move &amp; resize shapes and plot functions via tool-calling.</div>
     <div class="draft-note">
       🛠️ <strong>Living sketch — iterate freely.</strong> v0.9: <strong>§2 voice mode — first slice shipped.</strong> A 🎤 Voice toggle streams mic audio + whiteboard video to a server-side Gemini Live relay and plays back the model’s spoken replies. ⚠️ Browsers only allow the mic on <b>https://</b> or localhost — the plain-HTTP preview can’t use it yet. Earlier: §1 shapes, all of §3, §4 hardening.
       <span class="badge decided" style="margin-left:4px">green = decided</span>
@@ -219,8 +219,8 @@
 
   <div class="card">
     <h3>2.4 — Model acts on / draws back to the board</h3>
-    <div class="badges"><span class="badge p-low">Stretch</span></div>
-    <p>Voice commands trigger solve/graph; the model annotates or sketches back onto the canvas — a natural extension of the current Chart.js → Fabric graph rendering. <em>(Note: an AI talking-head avatar is explicitly out of scope — "streamed video from the whiteboard" means the board streamed <strong>into</strong> the model, resolved in §2.2.)</em></p>
+    <div class="badges"><span class="badge decided">✓ shipped (v1)</span></div>
+    <p>The assistant now <strong>draws on the board via Gemini Live function-calling</strong>: tools for draw_line/rect/ellipse/arrow, write_text, plot_function, and erase/move/resize (spatial — it targets objects by location) + clear_board. Coordinates are 0-100% of the board; the browser (<code>src/canvas-actions.js</code>) converts and runs them through Fabric, then returns a result so the model can confirm. So "solve it and <em>draw</em> the graph" / "erase the circle" / "make it bigger" now actually happen on the canvas.</p>
   </div>
 
   <!-- ============================================================ -->

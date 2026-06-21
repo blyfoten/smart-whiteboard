@@ -16,11 +16,29 @@ try {
 
 let GoogleGenAI = null;
 let Modality = null;
+let Type = null;
 try {
-    ({ GoogleGenAI, Modality } = require('@google/genai'));
+    ({ GoogleGenAI, Modality, Type } = require('@google/genai'));
 } catch (e) {
     // @google/genai missing — handled below.
 }
+
+// Canvas tools the assistant can call. Coordinates/sizes are percentages (0-100)
+// of the board; the browser converts them and executes via Fabric.
+const TOOLS = Type ? [{
+    functionDeclarations: [
+        { name: 'draw_line', description: 'Draw a straight line. x1,y1,x2,y2 are percentages 0-100 of the board (origin top-left).', parameters: { type: Type.OBJECT, properties: { x1: { type: Type.NUMBER }, y1: { type: Type.NUMBER }, x2: { type: Type.NUMBER }, y2: { type: Type.NUMBER } }, required: ['x1', 'y1', 'x2', 'y2'] } },
+        { name: 'draw_rect', description: 'Draw a rectangle by top-left corner (x,y) and size (width,height), all percent 0-100.', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, width: { type: Type.NUMBER }, height: { type: Type.NUMBER } }, required: ['x', 'y', 'width', 'height'] } },
+        { name: 'draw_ellipse', description: 'Draw an ellipse/circle filling the bounding box at (x,y) with size (width,height), percent 0-100.', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, width: { type: Type.NUMBER }, height: { type: Type.NUMBER } }, required: ['x', 'y', 'width', 'height'] } },
+        { name: 'draw_arrow', description: 'Draw an arrow from (x1,y1) to (x2,y2), percent 0-100.', parameters: { type: Type.OBJECT, properties: { x1: { type: Type.NUMBER }, y1: { type: Type.NUMBER }, x2: { type: Type.NUMBER }, y2: { type: Type.NUMBER } }, required: ['x1', 'y1', 'x2', 'y2'] } },
+        { name: 'write_text', description: 'Write text at (x,y) percent. size is optional (percent of board height, default 6).', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, text: { type: Type.STRING }, size: { type: Type.NUMBER } }, required: ['x', 'y', 'text'] } },
+        { name: 'plot_function', description: 'Plot a math.js expression as a graph, e.g. expression "x^2+3*x". variable default x, xmin/xmax default -10/10.', parameters: { type: Type.OBJECT, properties: { expression: { type: Type.STRING }, variable: { type: Type.STRING }, xmin: { type: Type.NUMBER }, xmax: { type: Type.NUMBER } }, required: ['expression'] } },
+        { name: 'erase_at', description: 'Erase/delete the object located at (x,y) percent.', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER } }, required: ['x', 'y'] } },
+        { name: 'move_object', description: 'Move the object at (x,y) by (dx,dy), all percent of the board.', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, dx: { type: Type.NUMBER }, dy: { type: Type.NUMBER } }, required: ['x', 'y', 'dx', 'dy'] } },
+        { name: 'scale_object', description: 'Resize the object at (x,y) by factor (1.5 = 50% bigger, 0.5 = half).', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, factor: { type: Type.NUMBER } }, required: ['x', 'y', 'factor'] } },
+        { name: 'clear_board', description: 'Erase everything on the board.', parameters: { type: Type.OBJECT, properties: {} } },
+    ],
+}] : null;
 
 // The Live model id differs by API provider. We try a list until one connects;
 // override with GEMINI_LIVE_MODEL to pin a specific one.
@@ -34,16 +52,19 @@ const CANDIDATE_MODELS = process.env.GEMINI_LIVE_MODEL
         'gemini-2.0-flash-live-001',
     ];
 
-const SYSTEM_INSTRUCTION = `You are a friendly, concise voice tutor looking at a shared math whiteboard.
-You can see the user's drawing (it streams to you as video) and hear them speak.
-Help them with equations and graphs. Keep spoken answers short and conversational.
-When the drawing is ambiguous (e.g. a digit you can't read), ask a brief clarifying question.
-The very first message you receive will be the single word "BEGIN". When you see it, greet the user in one short sentence and invite them to draw a math problem or ask a question — and do not mention the word BEGIN.`;
+const SYSTEM_INSTRUCTION = `You are a friendly, concise voice tutor and drawing collaborator on a shared math whiteboard.
+You can see the user's drawing (it streams to you as video), hear them speak, AND draw on the board yourself using the provided tools.
+You can draw lines, rectangles, ellipses, arrows, and text; plot functions; and erase, move, or resize existing objects.
+All tool coordinates and sizes are percentages from 0 to 100 of the board, with the origin at the top-left.
+When the user asks you to draw, sketch, plot, erase, move, or resize something, CALL THE APPROPRIATE TOOL rather than only describing it. You may call several tools in sequence to compose a drawing.
+Keep spoken answers short. When the drawing is ambiguous (e.g. a digit you can't read), ask a brief clarifying question.
+The very first message you receive will be the single word "BEGIN". When you see it, greet the user in one short sentence and invite them to draw or ask — and do not mention the word BEGIN.`;
 
 const LIVE_CONFIG = {
     systemInstruction: SYSTEM_INSTRUCTION,
     inputAudioTranscription: {},
     outputAudioTranscription: {},
+    ...(TOOLS ? { tools: TOOLS } : {}),
 };
 
 function attachVoiceServer(server) {
@@ -69,6 +90,12 @@ function attachVoiceServer(server) {
 
         // Forward a Gemini server message to the browser.
         const forward = (msg) => {
+            if (msg.toolCall && Array.isArray(msg.toolCall.functionCalls)) {
+                send({
+                    type: 'tool_call',
+                    calls: msg.toolCall.functionCalls.map((fc) => ({ id: fc.id, name: fc.name, args: fc.args || {} })),
+                });
+            }
             const sc = msg.serverContent;
             if (!sc) return;
             const parts = sc.modelTurn && sc.modelTurn.parts;
@@ -162,6 +189,10 @@ function attachVoiceServer(server) {
                     session.sendRealtimeInput({ video: { data: m.data, mimeType: 'image/jpeg' } });
                 } else if (m.type === 'text') {
                     session.sendRealtimeInput({ text: m.data });
+                } else if (m.type === 'tool_response' && Array.isArray(m.responses)) {
+                    session.sendToolResponse({
+                        functionResponses: m.responses.map((r) => ({ id: r.id, name: r.name, response: r.result || {} })),
+                    });
                 } else if (m.type === 'stop') {
                     try { session.close(); } catch (e) { /* noop */ }
                 }
