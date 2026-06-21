@@ -225,12 +225,27 @@ app.post('/graph', (req, res) => {
 });
 
 // Start the server with port fallback
+const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const { attachVoiceServer } = require('./voice-server');
 const HOST = process.env.HOST || '0.0.0.0';
+const CERT_DIR = process.env.CERT_DIR || '/etc/letsencrypt/live/cfor2.asuscomm.com';
 
 function startServer(port) {
-    const server = http.createServer(app);
+    let server;
+    try {
+        const tlsOptions = {
+            key:  fs.readFileSync(`${CERT_DIR}/privkey.pem`),
+            cert: fs.readFileSync(`${CERT_DIR}/fullchain.pem`),
+        };
+        server = https.createServer(tlsOptions, app);
+        server.on('listening', () => console.log(`Server running on https://${HOST}:${port}`));
+    } catch (err) {
+        console.warn(`HTTPS unavailable (${err.message}), falling back to HTTP.`);
+        server = http.createServer(app);
+        server.on('listening', () => console.log(`Server running on http://${HOST}:${port}`));
+    }
     attachVoiceServer(server); // WebSocket relay for the Gemini Live voice mode
     server
         .on('error', (err) => {
@@ -240,9 +255,6 @@ function startServer(port) {
             } else {
                 console.error('Error starting server:', err);
             }
-        })
-        .on('listening', () => {
-            console.log(`Server running on http://${HOST}:${port}`);
         });
     server.listen(port, HOST);
 }

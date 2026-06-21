@@ -33,6 +33,7 @@ function attachVoiceServer(server) {
     if (!WebSocketServer) return; // ws unavailable
 
     const wss = new WebSocketServer({ server, path: '/voice' });
+    wss.on('error', () => {}); // server's EADDRINUSE is handled by the http server's error handler
 
     wss.on('connection', async (browserWs) => {
         const send = (obj) => {
