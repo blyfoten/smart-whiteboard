@@ -75,7 +75,8 @@ function attachVoiceServer(server) {
             if (Array.isArray(parts)) {
                 for (const part of parts) {
                     if (part.inlineData && part.inlineData.data) send({ type: 'audio', data: part.inlineData.data });
-                    if (part.text) send({ type: 'text', role: 'model', data: part.text });
+                    // Skip part.text — it carries the model's internal "thinking",
+                    // not the spoken answer. The transcript uses outputTranscription.
                 }
             }
             if (sc.outputTranscription && sc.outputTranscription.text) {

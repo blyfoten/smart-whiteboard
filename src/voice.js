@@ -16,6 +16,33 @@ let sourceNode = null;
 let videoTimer = null;
 let hintShown = false;
 
+// Coalesce streaming transcript fragments into one growing line per speaker.
+let _transcriptRole = null;
+let _transcriptEl = null;
+
+function appendTranscript(role, fragment) {
+  const outputContent = document.getElementById('output-content');
+  if (!outputContent) return;
+  if (role !== _transcriptRole) {
+    _transcriptRole = role;
+    _transcriptEl = null;
+  }
+  if (!_transcriptEl) {
+    _transcriptEl = document.createElement('div');
+    _transcriptEl.className = 'result-block';
+    const label = role === 'user' ? 'You' : 'Assistant';
+    _transcriptEl.innerHTML = `<b>${label}:</b> <span class="t"></span>`;
+    outputContent.appendChild(_transcriptEl);
+  }
+  _transcriptEl.querySelector('.t').textContent += fragment;
+  outputContent.scrollTop = outputContent.scrollHeight;
+}
+
+function resetTranscript() {
+  _transcriptRole = null;
+  _transcriptEl = null;
+}
+
 // Playback
 let playCtx = null;
 let nextPlayTime = 0;
@@ -124,6 +151,7 @@ function captureFrameBase64() {
 async function start() {
   if (active) return;
   hintShown = false;
+  resetTranscript();
 
   // Browsers only expose the microphone on secure origins (https:// or localhost).
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -197,8 +225,10 @@ async function start() {
         stopPlayback();
         break;
       case 'text':
-        if (msg.role === 'user') appendToOutput(`<b>You said:</b> ${msg.data}`);
-        else appendToOutput(`<b>Assistant:</b> ${msg.data}`);
+        appendTranscript(msg.role, msg.data);
+        break;
+      case 'turn_complete':
+        resetTranscript();
         break;
       case 'error':
         appendToOutput(`<b>Voice error:</b> ${msg.message}`, true);
