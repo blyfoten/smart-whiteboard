@@ -20,6 +20,54 @@ function formatEquationForDisplay(expr) {
     .replace(/\s*\*\s*/g, ' · ');
 }
 
+// Parse `^` exponents out of a display string into raised spans. The exponent is
+// a balanced (..) group or a run of alphanumerics; the `^` is dropped and the
+// span recorded so it can be rendered as a real superscript (smaller + raised)
+// in the SAME font — no Unicode glyphs, so nothing falls back to tofu. A lone
+// `^` with no exponent stays literal. Nested powers just raise one level.
+function parseSuperscripts(s) {
+  let out = '';
+  const ranges = [];
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] !== '^') { out += s[i++]; continue; }
+    i++; // skip the caret
+    const start = out.length;
+    if (s[i] === '(') {
+      let depth = 0, j = i;
+      for (; j < s.length; j++) {
+        if (s[j] === '(') depth++;
+        else if (s[j] === ')' && --depth === 0) { j++; break; }
+      }
+      out += s.slice(i, j);
+      i = j;
+    } else {
+      let j = i;
+      while (j < s.length && /[0-9a-zA-Z.]/.test(s[j])) j++;
+      if (j === i) { out += '^'; continue; } // nothing to raise
+      out += s.slice(i, j);
+      i = j;
+    }
+    ranges.push([start, out.length]);
+  }
+  return { text: out, ranges };
+}
+
+// Render the recorded spans as superscripts via Fabric per-character styles
+// (relative to the current base font, so it survives the fit-to-width rescale).
+function applySuperscript(textObj, ranges, baseFont) {
+  if (!ranges.length) return;
+  const expFont = Math.max(8, Math.round(baseFont * 0.62));
+  const deltaY = -Math.round(baseFont * 0.33);
+  const line = {};
+  ranges.forEach(([start, end]) => {
+    for (let c = start; c < end; c++) line[c] = { fontSize: expFont, deltaY };
+  });
+  textObj.set({ styles: { 0: line } });
+  textObj.initDimensions();
+  textObj.setCoords();
+}
+
 // Tight bounding box (scene coords) of a set of Fabric objects, or null if empty.
 function boundingBoxOf(objects) {
   if (!objects || objects.length === 0) return null;
@@ -136,8 +184,11 @@ export async function extractEquation() {
 
       // Start from the box height, then shrink so the plain-text equation (which
       // is wider than handwriting — x^2 etc.) fits the original box width.
+      const { text: displayText, ranges: supRanges } = parseSuperscripts(
+        `${dependentVariable} = ${formatEquationForDisplay(equation)}`
+      );
       let fontSize = Math.max(12, Math.round(boxHeight * 0.9));
-      const eqText = new IText(`${dependentVariable} = ${formatEquationForDisplay(equation)}`, {
+      const eqText = new IText(displayText, {
         left: inkBox.minX,
         top: inkBox.minY,
         fill: 'green',
@@ -146,9 +197,11 @@ export async function extractEquation() {
         selectable: true,
         evented: true,
       });
+      applySuperscript(eqText, supRanges, fontSize);
       if (eqText.width > boxWidth && eqText.width > 0) {
         fontSize = Math.max(12, Math.floor(fontSize * (boxWidth / eqText.width)));
         eqText.set({ fontSize });
+        applySuperscript(eqText, supRanges, fontSize);
       }
       // Vertically center the (now shorter) text within the original box.
       eqText.set({ top: inkBox.minY + Math.max(0, (boxHeight - eqText.height) / 2) });
