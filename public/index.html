@@ -4,10 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Smart Whiteboard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preload" href="/fonts/caveat-latin.woff2" as="font" type="font/woff2" crossorigin>
   <style>
+    /* Self-hosted handwriting font (latin variable, weights 400-700). Self-hosting
+       avoids the external lazy-load/network failures that left text on the
+       fallback font. */
+    @font-face {
+      font-family: 'Caveat';
+      font-style: normal;
+      font-weight: 400 700;
+      font-display: swap;
+      src: url('/fonts/caveat-latin.woff2') format('woff2');
+    }
     body, html {
       margin: 0;
       padding: 0;
