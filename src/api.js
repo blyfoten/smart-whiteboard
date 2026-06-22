@@ -10,6 +10,16 @@ function appendOutput(html, isError) {
   appendToOutput(html, isError);
 }
 
+// Prettify an expression for display on the canvas (NOT for math.js). The Caveat
+// font draws '*' as a raised glyph, so 4*x looks like "4ˣx"; drop the asterisk
+// where multiplication is implicit (4*x → 4x, 2*(x+1) → 2(x+1), x*y → xy) and
+// render any remaining number×number with a middle dot.
+function formatEquationForDisplay(expr) {
+  return String(expr)
+    .replace(/([0-9a-zA-Z)\]])\s*\*\s*([a-zA-Z(])/g, '$1$2')
+    .replace(/\s*\*\s*/g, ' · ');
+}
+
 // Tight bounding box (scene coords) of a set of Fabric objects, or null if empty.
 function boundingBoxOf(objects) {
   if (!objects || objects.length === 0) return null;
@@ -127,7 +137,7 @@ export async function extractEquation() {
       // Start from the box height, then shrink so the plain-text equation (which
       // is wider than handwriting — x^2 etc.) fits the original box width.
       let fontSize = Math.max(12, Math.round(boxHeight * 0.9));
-      const eqText = new IText(`${dependentVariable} = ${equation}`, {
+      const eqText = new IText(`${dependentVariable} = ${formatEquationForDisplay(equation)}`, {
         left: inkBox.minX,
         top: inkBox.minY,
         fill: 'green',
