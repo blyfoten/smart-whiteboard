@@ -36,6 +36,13 @@ function pctLen(canvas, wPct, hPct) {
   };
 }
 
+function sceneToPct(canvas, sx, sy) {
+  const t = vpt(canvas);
+  const screenX = sx * t[0] + t[4];
+  const screenY = sy * t[3] + t[5];
+  return { x: (screenX / canvas.getWidth()) * 100, y: (screenY / canvas.getHeight()) * 100 };
+}
+
 function findObjectAt(canvas, pt) {
   const objs = canvas.getObjects().filter((o) => o.selectable !== false && !o._isGhost);
   for (let i = objs.length - 1; i >= 0; i--) {
@@ -143,6 +150,26 @@ export async function executeAction(name, args = {}) {
         canvas.requestRenderAll();
       }
       return { ok: true };
+    }
+    case 'get_objects': {
+      const objects = canvas.getObjects()
+        .filter((o) => o.selectable !== false && !o._isGhost)
+        .map((o, i) => {
+          const r = o.getBoundingRect();
+          const tl = sceneToPct(canvas, r.left, r.top);
+          const br = sceneToPct(canvas, r.left + r.width, r.top + r.height);
+          const out = {
+            index: i,
+            type: o.type,
+            x: Math.round(tl.x),
+            y: Math.round(tl.y),
+            width: Math.round(br.x - tl.x),
+            height: Math.round(br.y - tl.y),
+          };
+          if (o.text) out.text = String(o.text).slice(0, 40);
+          return out;
+        });
+      return { objects };
     }
     case 'duplicate_object': {
       const o = findObjectAt(canvas, pctToScene(canvas, args.x, args.y));

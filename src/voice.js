@@ -169,23 +169,27 @@ function captureFrameBase64() {
   // the user's board.
   ctx.save();
   ctx.lineWidth = 1;
-  ctx.font = '10px sans-serif';
+  ctx.font = 'bold 13px sans-serif';
   ctx.textBaseline = 'top';
   for (let p = 0; p <= 100; p += 10) {
     const x = (p / 100) * w;
     const y = (p / 100) * h;
-    ctx.strokeStyle = p % 50 === 0 ? 'rgba(0,120,255,0.32)' : 'rgba(0,120,255,0.14)';
+    ctx.strokeStyle = p % 50 === 0 ? 'rgba(0,120,255,0.45)' : 'rgba(0,120,255,0.22)';
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     if (p > 0 && p < 100) {
-      ctx.fillStyle = 'rgba(0,90,200,0.6)';
-      ctx.fillText(String(p), x + 1, 1);
-      ctx.fillText(String(p), 1, y + 1);
+      // White halo + blue text so labels stay readable over any content.
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillText(String(p), x + 2, 1);
+      ctx.fillText(String(p), 2, y + 1);
+      ctx.fillStyle = 'rgba(0,80,200,0.95)';
+      ctx.fillText(String(p), x + 1, 0);
+      ctx.fillText(String(p), 1, y);
     }
   }
   ctx.restore();
 
-  const dataUrl = off.toDataURL('image/jpeg', 0.6);
+  const dataUrl = off.toDataURL('image/jpeg', 0.72);
   return dataUrl.split(',')[1];
 }
 
