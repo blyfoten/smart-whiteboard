@@ -40,18 +40,20 @@ const TOOLS = Type ? [{
     ],
 }] : null;
 
-// The Live model id differs by API provider, and tool/function calling is only
-// reliable on the "half-cascade" models (native-audio models reject tool calls
-// with "Operation is not implemented"). Try tool-capable half-cascade models
-// first so the drawing tools work; fall back to native-audio (nicer voice, but
-// no tools). Override with GEMINI_LIVE_MODEL to pin one.
+// The Live model id differs by API provider, and simultaneous video+audio+tools
+// works best on 3.x-Flash live models (per Google's own guidance); native-audio
+// models reject tool calls entirely. Try the most capable tool-friendly models
+// first, falling back through 2.5 half-cascade to native-audio (voice only).
+// Override with GEMINI_LIVE_MODEL to pin one.
 const CANDIDATE_MODELS = process.env.GEMINI_LIVE_MODEL
     ? [process.env.GEMINI_LIVE_MODEL]
     : [
+        'gemini-3.5-flash-live-preview',                  // 3.5 — best at video+audio+tools
+        'gemini-live-3.5-flash-preview',
+        'gemini-3.1-flash-live-preview',
         'gemini-live-2.5-flash-preview',                  // half-cascade — strong tool calling
-        'gemini-2.0-flash-live-001',                      // half-cascade — tool calling
-        'gemini-2.5-flash-live-preview',                  // possible current half-cascade id
-        'gemini-3.1-flash-live-preview',                  // newest live model
+        'gemini-2.5-flash-live-preview',
+        'gemini-2.0-flash-live-001',                      // half-cascade fallback
         'gemini-2.5-flash-native-audio-preview-12-2025',  // native audio (great voice, no tools)
         'gemini-2.5-flash-preview-native-audio-dialog',
         'gemini-live-2.5-flash-native-audio',
@@ -172,8 +174,8 @@ function attachVoiceServer(server) {
             send({
                 type: 'error',
                 message:
-                    'Could not start a Gemini Live session (tried ' + CANDIDATE_MODELS.length + ' model(s)). ' +
-                    'Last error: ' + (lastErr && lastErr.message) + '. Set GEMINI_LIVE_MODEL to a valid Live model.',
+                    'Could not start a Gemini Live session. Tried: ' + CANDIDATE_MODELS.join(', ') +
+                    '. Last error: ' + (lastErr && lastErr.message) + '. Set GEMINI_LIVE_MODEL to a valid Live model.',
             });
             browserWs.close();
             return;
@@ -182,6 +184,7 @@ function attachVoiceServer(server) {
         committed = true;
         console.log('🎤 Voice session connected (model: ' + workingModel + ')');
         send({ type: 'ready' });
+        send({ type: 'info', message: 'Connected — model: ' + workingModel });
         try { session.sendRealtimeInput({ text: 'BEGIN' }); } catch (e) { /* noop */ } // make the model greet first
 
         browserWs.on('message', (raw) => {

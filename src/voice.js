@@ -254,6 +254,9 @@ async function start() {
       case 'turn_complete':
         resetTranscript();
         break;
+      case 'info':
+        appendToOutput(`<i>${msg.message}</i>`);
+        break;
       case 'error':
         appendToOutput(`<b>Voice error:</b> ${msg.message}`, true);
         setStatus('Voice: error — see output panel');
