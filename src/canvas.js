@@ -124,6 +124,11 @@ export function undoLast(canvas) {
   if (objects.length === 0) return;
   const last = objects[objects.length - 1];
   canvas.remove(last);
+  // If this object replaced some handwriting in place (extract-in-place), bring
+  // the original strokes back so a single Undo fully reverses the replacement.
+  if (Array.isArray(last._replacedInk)) {
+    last._replacedInk.forEach((o) => canvas.add(o));
+  }
   canvas.requestRenderAll();
 }
 

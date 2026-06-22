@@ -10,6 +10,20 @@ function appendOutput(html, isError) {
   appendToOutput(html, isError);
 }
 
+// Tight bounding box (scene coords) of a set of Fabric objects, or null if empty.
+function boundingBoxOf(objects) {
+  if (!objects || objects.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  objects.forEach((o) => {
+    const r = o.getBoundingRect(true, false);
+    minX = Math.min(minX, r.left);
+    minY = Math.min(minY, r.top);
+    maxX = Math.max(maxX, r.left + r.width);
+    maxY = Math.max(maxY, r.top + r.height);
+  });
+  return { minX, minY, maxX, maxY };
+}
+
 export function solveEquationFromText(equation) {
   const model = getCurrentModel();
   appendOutput(`<b>Solving equation:</b> ${equation}<br><b>Using model:</b> ${model}<br><i>Loading...</i>`);
@@ -101,20 +115,40 @@ export async function extractEquation() {
       }
       appendOutput(outputHtml);
 
-      const boxHeight = boundingBox.maxY - boundingBox.minY;
-      const fontSize = Math.round(boxHeight * 0.9);
-      const textTop = boundingBox.maxY + 10;
+      // The handwriting we extracted from = everything except graphs and any
+      // earlier extracted equation. We replace it in place with clean text.
+      const inkObjects = canvas
+        .getObjects()
+        .filter((o) => !o._isGraph && !o._isExtracted);
+      const inkBox = boundingBoxOf(inkObjects) || boundingBox;
+      const boxWidth = inkBox.maxX - inkBox.minX;
+      const boxHeight = inkBox.maxY - inkBox.minY;
 
+      // Start from the box height, then shrink so the plain-text equation (which
+      // is wider than handwriting — x^2 etc.) fits the original box width.
+      let fontSize = Math.max(12, Math.round(boxHeight * 0.9));
       const eqText = new IText(`${dependentVariable} = ${equation}`, {
-        left: boundingBox.minX,
-        top: textTop,
+        left: inkBox.minX,
+        top: inkBox.minY,
         fill: 'green',
         fontSize,
         fontFamily: 'Caveat, cursive',
-        selectable: false,
-        evented: false,
+        selectable: true,
+        evented: true,
       });
+      if (eqText.width > boxWidth && eqText.width > 0) {
+        fontSize = Math.max(12, Math.floor(fontSize * (boxWidth / eqText.width)));
+        eqText.set({ fontSize });
+      }
+      // Vertically center the (now shorter) text within the original box.
+      eqText.set({ top: inkBox.minY + Math.max(0, (boxHeight - eqText.height) / 2) });
+      eqText._isExtracted = true;
+
+      // Replace the handwriting in place, stashing it for a one-press Undo.
+      eqText._replacedInk = inkObjects;
+      inkObjects.forEach((o) => canvas.remove(o));
       canvas.add(eqText);
+      canvas.requestRenderAll();
 
       window.extractedEquationData = { equation, dependentVariable, scope, ranges };
       await drawGraph();

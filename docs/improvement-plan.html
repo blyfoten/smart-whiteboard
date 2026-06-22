@@ -101,9 +101,9 @@
 
   <header class="hero">
     <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
-    <div class="sub">Draft v0.10 · 2026-06-21 · §2 voice mode now a hands-on collaborator — it can draw, erase, move &amp; resize shapes and plot functions via tool-calling.</div>
+    <div class="sub">Draft v0.11 · 2026-06-22 · self-hosted <em>Caveat</em> handwriting font; extract now replaces the handwriting <strong>in place</strong> (fit-to-box, one-press Undo).</div>
     <div class="draft-note">
-      🛠️ <strong>Living sketch — iterate freely.</strong> v0.9: <strong>§2 voice mode — first slice shipped.</strong> A 🎤 Voice toggle streams mic audio + whiteboard video to a server-side Gemini Live relay and plays back the model’s spoken replies. ⚠️ Browsers only allow the mic on <b>https://</b> or localhost — the plain-HTTP preview can’t use it yet. Earlier: §1 shapes, all of §3, §4 hardening.
+      🛠️ <strong>Living sketch — iterate freely.</strong> v0.11: handwriting font <strong>self-hosted</strong> (was falling back to a system font); the extracted equation now <strong>replaces the handwritten strokes in their own bounding box</strong>, sized to fit the box width, and a single Undo restores the original ink. v0.9: <strong>§2 voice mode — first slice shipped.</strong> A 🎤 Voice toggle streams mic audio + whiteboard video to a server-side Gemini Live relay and plays back the model’s spoken replies. ⚠️ Browsers only allow the mic on <b>https://</b> or localhost — the plain-HTTP preview can’t use it yet. Earlier: §1 shapes, all of §3, §4 hardening.
       <span class="badge decided" style="margin-left:4px">green = decided</span>
       <span class="badge open">amber = open question</span>
     </div>
