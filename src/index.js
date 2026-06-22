@@ -31,6 +31,14 @@ document.addEventListener('DOMContentLoaded', () => {
       addReadyIndicator(canvas);
       setupCanvasEventListeners();
       initModes(canvas);
+
+      // Web fonts load async and Fabric renders text to the canvas, so re-render
+      // once Caveat is available (otherwise the first text uses a fallback font).
+      if (document.fonts && document.fonts.load) {
+        document.fonts.load("24px 'Caveat'")
+          .then(() => canvas.requestRenderAll())
+          .catch(() => {});
+      }
     } else {
       throw new Error('getCanvas() returned null — Fabric canvas not initialized.');
     }

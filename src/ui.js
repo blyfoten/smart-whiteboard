@@ -71,11 +71,11 @@ export function setupCanvasEventListeners() {
       left: pointer.x,
       top: pointer.y,
       fill: 'red',
-      fontSize: 20,
+      fontSize: 24,
       backgroundColor: 'transparent',
       selectable: true,
       editable: true,
-      fontFamily: 'Arial',
+      fontFamily: 'Caveat, cursive',
     });
     canvas.add(text);
     canvas.setActiveObject(text);
@@ -128,8 +128,8 @@ export function initializeEventListeners() {
         left: 100,
         top: 100,
         fill: 'black',
-        fontSize: 30,
-        fontFamily: 'Arial',
+        fontSize: 36,
+        fontFamily: 'Caveat, cursive',
       });
       canvas.add(text);
       canvas.setActiveObject(text);
