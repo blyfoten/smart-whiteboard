@@ -1,9 +1,12 @@
 // src/canvas-actions.js — execute assistant tool calls against the Fabric canvas.
 //
-// The voice assistant (Gemini Live) calls these via function-calling. All
-// positions/sizes are percentages (0-100) of the visible board, origin top-left,
-// converted here to scene coordinates (so it works under zoom/pan). Object
-// targeting for erase/move/resize is spatial: find the object at a given point.
+// The voice assistant (Gemini Live) calls these via function-calling. Positions/
+// sizes are percentages (0-100) of the visible board (origin top-left), converted
+// here to scene coordinates (zoom/pan aware).
+//
+// Shapes are targeted by a STABLE id: drawing tools return the new shape's id, and
+// get_objects lists ids — so the model can reliably adjust a specific shape later.
+// (A spatial x,y fallback is kept for when no id is available.)
 
 import { getCanvas, clearCanvas } from './canvas.js';
 import { Line, Rect, Ellipse, IText, Path } from 'fabric';
@@ -11,6 +14,7 @@ import { renderGraph } from './graph.js';
 
 const STROKE = 'black';
 const STROKE_WIDTH = 4;
+let _idCounter = 0;
 
 function num(v, d = 0) {
   const n = Number(v);
@@ -43,6 +47,15 @@ function sceneToPct(canvas, sx, sy) {
   return { x: (screenX / canvas.getWidth()) * 100, y: (screenY / canvas.getHeight()) * 100 };
 }
 
+function ensureId(o) {
+  if (!o._aiId) o._aiId = 'o' + (++_idCounter);
+  return o._aiId;
+}
+
+function findById(canvas, id) {
+  return canvas.getObjects().find((o) => o._aiId === id) || null;
+}
+
 function findObjectAt(canvas, pt) {
   const objs = canvas.getObjects().filter((o) => o.selectable !== false && !o._isGhost);
   for (let i = objs.length - 1; i >= 0; i--) {
@@ -61,6 +74,18 @@ function findObjectAt(canvas, pt) {
   return bestDist < 140 ? best : null;
 }
 
+// Resolve the target shape: by id (exact) if given, else by x,y location.
+function resolveTarget(canvas, args) {
+  if (args && args.id != null) {
+    const o = findById(canvas, String(args.id));
+    if (o) return o;
+  }
+  if (args && args.x != null && args.y != null) {
+    return findObjectAt(canvas, pctToScene(canvas, args.x, args.y));
+  }
+  return null;
+}
+
 function arrowPath(a, b) {
   const ang = Math.atan2(b.y - a.y, b.x - a.x);
   const len = Math.hypot(b.x - a.x, b.y - a.y);
@@ -71,43 +96,48 @@ function arrowPath(a, b) {
   return `M ${a.x} ${a.y} L ${b.x} ${b.y} L ${h1.x} ${h1.y} M ${b.x} ${b.y} L ${h2.x} ${h2.y}`;
 }
 
-// executeAction(name, args) -> Promise<result>. Result is a small JSON object
-// echoed back to the model so it knows the call succeeded/failed.
+function applyColor(o, color) {
+  o.set({ stroke: color });
+  if (o.type === 'i-text' || o.type === 'text') o.set({ fill: color });
+  else if (o.fill && o.fill !== 'transparent' && o.fill !== '') o.set({ fill: color });
+}
+
+// executeAction(name, args) -> Promise<result>. Drawing tools return the new
+// shape's id; the model echoes results back so it knows what succeeded.
 export async function executeAction(name, args = {}) {
   const canvas = getCanvas();
   if (!canvas) return { error: 'canvas not available' };
-  const add = (obj) => { canvas.add(obj); canvas.requestRenderAll(); };
+  const place = (obj) => {
+    canvas.add(obj);
+    canvas.requestRenderAll();
+    return { ok: true, id: ensureId(obj) };
+  };
 
   switch (name) {
     case 'draw_line': {
       const a = pctToScene(canvas, args.x1, args.y1);
       const b = pctToScene(canvas, args.x2, args.y2);
-      add(new Line([a.x, a.y, b.x, b.y], { stroke: STROKE, strokeWidth: STROKE_WIDTH }));
-      return { ok: true };
+      return place(new Line([a.x, a.y, b.x, b.y], { stroke: STROKE, strokeWidth: STROKE_WIDTH }));
     }
     case 'draw_rect': {
       const p = pctToScene(canvas, args.x, args.y);
       const s = pctLen(canvas, num(args.width, 10), num(args.height, 10));
-      add(new Rect({ left: p.x, top: p.y, width: s.w, height: s.h, fill: 'transparent', stroke: STROKE, strokeWidth: STROKE_WIDTH }));
-      return { ok: true };
+      return place(new Rect({ left: p.x, top: p.y, width: s.w, height: s.h, fill: 'transparent', stroke: STROKE, strokeWidth: STROKE_WIDTH }));
     }
     case 'draw_ellipse': {
       const p = pctToScene(canvas, args.x, args.y);
       const s = pctLen(canvas, num(args.width, 10), num(args.height, 10));
-      add(new Ellipse({ left: p.x, top: p.y, rx: s.w / 2, ry: s.h / 2, fill: 'transparent', stroke: STROKE, strokeWidth: STROKE_WIDTH }));
-      return { ok: true };
+      return place(new Ellipse({ left: p.x, top: p.y, rx: s.w / 2, ry: s.h / 2, fill: 'transparent', stroke: STROKE, strokeWidth: STROKE_WIDTH }));
     }
     case 'draw_arrow': {
       const a = pctToScene(canvas, args.x1, args.y1);
       const b = pctToScene(canvas, args.x2, args.y2);
-      add(new Path(arrowPath(a, b), { stroke: STROKE, strokeWidth: STROKE_WIDTH, fill: '' }));
-      return { ok: true };
+      return place(new Path(arrowPath(a, b), { stroke: STROKE, strokeWidth: STROKE_WIDTH, fill: '' }));
     }
     case 'write_text': {
       const p = pctToScene(canvas, args.x, args.y);
       const fontSize = Math.max(10, pctLen(canvas, 0, num(args.size, 6)).h);
-      add(new IText(String(args.text || ''), { left: p.x, top: p.y, fill: STROKE, fontSize, fontFamily: 'Caveat, cursive' }));
-      return { ok: true };
+      return place(new IText(String(args.text || ''), { left: p.x, top: p.y, fill: STROKE, fontSize, fontFamily: 'Caveat, cursive' }));
     }
     case 'plot_function': {
       const variable = String(args.variable || 'x');
@@ -124,42 +154,15 @@ export async function executeAction(name, args = {}) {
       if (data.success) { renderGraph(data.data, 'y'); return { ok: true, points: data.data.length }; }
       return { error: data.message || 'graph failed' };
     }
-    case 'erase_at': {
-      const o = findObjectAt(canvas, pctToScene(canvas, args.x, args.y));
-      if (!o) return { ok: false, message: 'no object at that location' };
-      canvas.remove(o);
-      canvas.requestRenderAll();
-      return { ok: true };
-    }
-    case 'move_object': {
-      const o = findObjectAt(canvas, pctToScene(canvas, args.x, args.y));
-      if (!o) return { ok: false, message: 'no object at that location' };
-      const d = pctLen(canvas, args.dx, args.dy);
-      o.set({ left: o.left + d.w, top: o.top + d.h });
-      o.setCoords();
-      canvas.requestRenderAll();
-      return { ok: true };
-    }
-    case 'scale_object': {
-      const o = findObjectAt(canvas, pctToScene(canvas, args.x, args.y));
-      if (!o) return { ok: false, message: 'no object at that location' };
-      const f = num(args.factor, 1);
-      if (f > 0) {
-        o.set({ scaleX: (o.scaleX || 1) * f, scaleY: (o.scaleY || 1) * f });
-        o.setCoords();
-        canvas.requestRenderAll();
-      }
-      return { ok: true };
-    }
     case 'get_objects': {
       const objects = canvas.getObjects()
         .filter((o) => o.selectable !== false && !o._isGhost)
-        .map((o, i) => {
+        .map((o) => {
           const r = o.getBoundingRect();
           const tl = sceneToPct(canvas, r.left, r.top);
           const br = sceneToPct(canvas, r.left + r.width, r.top + r.height);
           const out = {
-            index: i,
+            id: ensureId(o),
             type: o.type,
             x: Math.round(tl.x),
             y: Math.round(tl.y),
@@ -171,16 +174,53 @@ export async function executeAction(name, args = {}) {
         });
       return { objects };
     }
+    case 'delete_object':
+    case 'erase_at': {
+      const o = resolveTarget(canvas, args);
+      if (!o) return { ok: false, message: 'shape not found' };
+      canvas.remove(o);
+      canvas.requestRenderAll();
+      return { ok: true };
+    }
+    case 'move_object': {
+      const o = resolveTarget(canvas, args);
+      if (!o) return { ok: false, message: 'shape not found' };
+      const d = pctLen(canvas, args.dx, args.dy);
+      o.set({ left: o.left + d.w, top: o.top + d.h });
+      o.setCoords();
+      canvas.requestRenderAll();
+      return { ok: true, id: ensureId(o) };
+    }
+    case 'resize_object':
+    case 'scale_object': {
+      const o = resolveTarget(canvas, args);
+      if (!o) return { ok: false, message: 'shape not found' };
+      const f = num(args.factor, 1);
+      if (f > 0) {
+        o.set({ scaleX: (o.scaleX || 1) * f, scaleY: (o.scaleY || 1) * f });
+        o.setCoords();
+        canvas.requestRenderAll();
+      }
+      return { ok: true, id: ensureId(o) };
+    }
+    case 'set_color': {
+      const o = resolveTarget(canvas, args);
+      if (!o) return { ok: false, message: 'shape not found' };
+      applyColor(o, String(args.color || 'black'));
+      canvas.requestRenderAll();
+      return { ok: true, id: ensureId(o) };
+    }
     case 'duplicate_object': {
-      const o = findObjectAt(canvas, pctToScene(canvas, args.x, args.y));
-      if (!o) return { ok: false, message: 'no object at that location' };
+      const o = resolveTarget(canvas, args);
+      if (!o) return { ok: false, message: 'shape not found' };
       const d = pctLen(canvas, args.dx, args.dy);
       const cloned = await o.clone();
+      cloned._aiId = undefined; // give the copy its own id
       cloned.set({ left: o.left + d.w, top: o.top + d.h, evented: true, selectable: true });
       cloned.setCoords();
       canvas.add(cloned);
       canvas.requestRenderAll();
-      return { ok: true };
+      return { ok: true, id: ensureId(cloned) };
     }
     case 'clear_board': {
       clearCanvas(canvas);
