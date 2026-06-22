@@ -144,6 +144,17 @@ export async function executeAction(name, args = {}) {
       }
       return { ok: true };
     }
+    case 'duplicate_object': {
+      const o = findObjectAt(canvas, pctToScene(canvas, args.x, args.y));
+      if (!o) return { ok: false, message: 'no object at that location' };
+      const d = pctLen(canvas, args.dx, args.dy);
+      const cloned = await o.clone();
+      cloned.set({ left: o.left + d.w, top: o.top + d.h, evented: true, selectable: true });
+      cloned.setCoords();
+      canvas.add(cloned);
+      canvas.requestRenderAll();
+      return { ok: true };
+    }
     case 'clear_board': {
       clearCanvas(canvas);
       return { ok: true };

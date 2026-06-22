@@ -36,6 +36,7 @@ const TOOLS = Type ? [{
         { name: 'erase_at', description: 'Erase/delete the object located at (x,y) percent.', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER } }, required: ['x', 'y'] } },
         { name: 'move_object', description: 'Move the object at (x,y) by (dx,dy), all percent of the board.', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, dx: { type: Type.NUMBER }, dy: { type: Type.NUMBER } }, required: ['x', 'y', 'dx', 'dy'] } },
         { name: 'scale_object', description: 'Resize the object at (x,y) by factor (1.5 = 50% bigger, 0.5 = half).', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, factor: { type: Type.NUMBER } }, required: ['x', 'y', 'factor'] } },
+        { name: 'duplicate_object', description: 'Make an EXACT copy (same size, shape, aspect ratio) of the object at (x,y) and place the copy offset by (dx,dy) percent. Use this to match/replicate something the user drew — far more accurate than re-drawing it.', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, dx: { type: Type.NUMBER }, dy: { type: Type.NUMBER } }, required: ['x', 'y', 'dx', 'dy'] } },
         { name: 'clear_board', description: 'Erase everything on the board.', parameters: { type: Type.OBJECT, properties: {} } },
     ],
 }] : null;
@@ -63,7 +64,9 @@ const SYSTEM_INSTRUCTION = `You are a friendly, concise voice tutor and drawing 
 You can see the user's drawing (it streams to you as video), hear them speak, AND draw on the board yourself using the provided tools.
 You can draw lines, rectangles, ellipses, arrows, and text; plot functions; and erase, move, or resize existing objects.
 All tool coordinates and sizes are percentages from 0 to 100 of the board, with the origin at the top-left.
+The board image you see has a faint blue coordinate grid: the numbers 0-100 along the top are the x axis, and 0-100 down the left edge are the y axis. READ positions and sizes directly off this grid — don't guess. The grid cells are usually NOT square (the board is wider than tall), so to match a shape's proportions, read its width along the x axis and its height along the y axis separately; they will be different numbers even for a square.
 When the user asks you to draw, sketch, plot, erase, move, or resize something, CALL THE APPROPRIATE TOOL rather than only describing it. You may call several tools in sequence to compose a drawing.
+When the user asks you to match, copy, or replicate something they drew, prefer the duplicate_object tool (an exact copy) over re-drawing it from estimated coordinates.
 Keep spoken answers short. When the drawing is ambiguous (e.g. a digit you can't read), ask a brief clarifying question.
 The very first message you receive will be the single word "BEGIN". When you see it, greet the user in one short sentence and invite them to draw or ask — and do not mention the word BEGIN.`;
 

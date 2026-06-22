@@ -163,6 +163,28 @@ function captureFrameBase64() {
   ctx.fillStyle = 'white';
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(srcEl, 0, 0, w, h);
+
+  // Faint 0-100 coordinate grid so the model can READ positions/proportions off
+  // the image instead of guessing. Drawn only on the streamed frame, never on
+  // the user's board.
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.font = '10px sans-serif';
+  ctx.textBaseline = 'top';
+  for (let p = 0; p <= 100; p += 10) {
+    const x = (p / 100) * w;
+    const y = (p / 100) * h;
+    ctx.strokeStyle = p % 50 === 0 ? 'rgba(0,120,255,0.32)' : 'rgba(0,120,255,0.14)';
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    if (p > 0 && p < 100) {
+      ctx.fillStyle = 'rgba(0,90,200,0.6)';
+      ctx.fillText(String(p), x + 1, 1);
+      ctx.fillText(String(p), 1, y + 1);
+    }
+  }
+  ctx.restore();
+
   const dataUrl = off.toDataURL('image/jpeg', 0.6);
   return dataUrl.split(',')[1];
 }
