@@ -124,7 +124,7 @@
       position: fixed;
       z-index: 200;
       display: flex;
-      align-items: center;
+      flex-direction: column;
       gap: 4px;
       background: #fff;
       border: 1px solid #ccc;
@@ -132,6 +132,10 @@
       box-shadow: 0 6px 20px rgba(0,0,0,0.22);
       padding: 5px;
     }
+    #equation-menu .em-row { display: flex; align-items: center; gap: 4px; }
+    #equation-menu .em-methods { display: flex; flex-wrap: wrap; gap: 4px; padding-top: 4px; border-top: 1px solid #eee; }
+    #equation-menu .em-methods.hidden { display: none; }
+    #equation-menu .em-methods button { background: #eef4ff; border-color: #cdddfb; }
     #equation-menu button { font-size: 13px; padding: 5px 9px; white-space: nowrap; }
     #equation-menu .em-label { font-size: 11px; color: #999; padding: 0 4px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #equation-menu .em-close { color: #888; }

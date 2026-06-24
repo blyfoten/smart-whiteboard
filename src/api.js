@@ -1,7 +1,7 @@
 // src/api.js — fetch calls to backend (solve, extract, graph)
 
 import { getCanvas, getCanvasBoundingBox, cropCanvasToBoundingBox } from './canvas.js';
-import { IText } from 'fabric';
+import { IText, Textbox } from 'fabric';
 import { getCurrentModel } from './ui.js';
 import { renderGraph } from './graph.js';
 import { appendToOutput } from './output.js';
@@ -104,6 +104,92 @@ export function solveEquationFromText(equation, modelOverride) {
       console.error('Error:', err);
       appendOutput(`<b>Error:</b><br>${err.message || 'Communication error with server'}`, true);
     });
+}
+
+// Strip light markdown/LaTeX so AI output reads cleanly as handwriting.
+function cleanForBoard(s) {
+  return String(s)
+    .replace(/\*\*/g, '')
+    .replace(/`/g, '')
+    .replace(/^\s*#{1,6}\s*/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// A Caveat text block placed just below `anchor`, replacing any previous block
+// tied to the same equation. Returned not-yet-added so the caller can add it.
+function makeBoardBlock(canvas, anchor, initial) {
+  canvas
+    .getObjects()
+    .filter((o) => o._isSteps && o._stepsFor === anchor)
+    .forEach((o) => canvas.remove(o));
+
+  const scaleX = anchor.scaleX || 1;
+  const scaleY = anchor.scaleY || 1;
+  const fontSize = Math.max(18, Math.min(anchor.fontSize || 28, 30));
+  const block = new Textbox(initial, {
+    left: anchor.left,
+    top: anchor.top + anchor.height * scaleY + Math.max(12, fontSize * 0.4),
+    width: Math.max(320, (anchor.width || 300) * scaleX),
+    fontSize,
+    fontFamily: 'Caveat, cursive',
+    fill: '#1e40af',
+    selectable: true,
+    evented: true,
+    editable: false,
+  });
+  block._isSteps = true;
+  block._stepsFor = anchor;
+  return block;
+}
+
+// Solve via the AI and render the answer on the whiteboard (Caveat, below the
+// equation) as well as logging it to the output panel.
+export async function solveToBoard(instruction, model, anchor, heading) {
+  const canvas = getCanvas();
+  appendOutput(`<b>${heading || 'Solving'}</b><br><i>Using model: ${model}</i><br><i>Processing…</i>`);
+
+  let block = null;
+  if (canvas && anchor) {
+    block = makeBoardBlock(canvas, anchor, '⏳ solving…');
+    canvas.add(block);
+    canvas.requestRenderAll();
+  }
+
+  try {
+    const resp = await fetch('/solve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equation: instruction, model }),
+    });
+    const data = await resp.json();
+    const ok = !!data.success;
+    const text = ok ? cleanForBoard(data.result) : `Error: ${data.message || 'solve failed'}`;
+
+    if (block) {
+      block.set({ text, fill: ok ? '#1e40af' : '#b91c1c' });
+      block.initDimensions();
+      block.setCoords();
+      canvas.requestRenderAll();
+    }
+    appendOutput(
+      ok
+        ? `<b>${heading || 'Solution'}:</b><br>${escapeHtml(text).replace(/\n/g, '<br>')}`
+        : `<b>Error:</b><br>${data.message || 'Unknown error'}`,
+      !ok
+    );
+  } catch (err) {
+    console.error('Error:', err);
+    if (block) {
+      block.set({ text: `Error: ${err.message || err}`, fill: '#b91c1c' });
+      canvas.requestRenderAll();
+    }
+    appendOutput(`<b>Error:</b><br>${err.message || 'Communication error with server'}`, true);
+  }
 }
 
 export function solveEquation() {

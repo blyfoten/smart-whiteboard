@@ -1,12 +1,11 @@
 // src/equation-menu.js — a Word-style floating action menu that appears next to
 // a freshly analyzed equation. The actions are content-aware: a function like
-// y = x^2 - 4x + 16 offers Plot / Solve =0 / Show steps, while a plain
-// expression just offers Plot (when it has a variable) and Copy.
+// y = x^2 - 4x + 16 offers Plot / Solve =0 / Steps (with a choice of method when
+// several apply), while a plain expression just offers Plot and Copy.
 
 import { getCanvas } from './canvas.js';
-import { drawGraph, solveEquationFromText } from './api.js';
+import { drawGraph, solveToBoard } from './api.js';
 import { getCurrentModel } from './ui.js';
-import { appendToOutput } from './output.js';
 
 let menuEl = null;
 let target = null;
@@ -18,8 +17,8 @@ function aiModel() {
   return m === 'math' ? 'gpt' : m;
 }
 
-// Crude content analysis: highest power of the independent variable → suggested
-// solving method, plus whether the expression actually involves that variable.
+// Crude content analysis: highest power of the independent variable → degree,
+// plus whether the expression actually involves that variable.
 function analyzeEquation(data) {
   const expr = String(data.expression || data.equation || '');
   const indepVar =
@@ -34,17 +33,36 @@ function analyzeEquation(data) {
   let m;
   while ((m = re.exec(expr))) degree = Math.max(degree, parseInt(m[1], 10));
 
-  let method = '';
-  if (degree === 2) method = 'quadratic (p-q) formula';
-  else if (degree >= 3) method = 'factoring or numerical methods';
-
-  return { expr, indepVar, dep, degree, isFunction: hasVar, method };
+  return { expr, indepVar, dep, degree, isFunction: hasVar };
 }
 
-function makeButton(label, title, handler) {
+// Solving methods that apply to a given degree (first one is the default).
+function methodsFor(degree, indepVar) {
+  if (degree === 1) {
+    return [{ label: `Isolate ${indepVar}`, phrase: 'isolating the variable' }];
+  }
+  if (degree === 2) {
+    return [
+      { label: 'p-q formula', phrase: 'the p-q formula' },
+      { label: 'Quadratic formula', phrase: 'the quadratic formula' },
+      { label: 'Completing the square', phrase: 'completing the square' },
+      { label: 'Factoring', phrase: 'factoring' },
+    ];
+  }
+  if (degree >= 3) {
+    return [
+      { label: 'Factoring', phrase: 'factoring' },
+      { label: 'Numerical', phrase: 'a numerical method such as Newton–Raphson' },
+    ];
+  }
+  return [];
+}
+
+function makeButton(label, title, handler, className) {
   const b = document.createElement('button');
   b.textContent = label;
   if (title) b.title = title;
+  if (className) b.className = className;
   b.addEventListener('click', (e) => {
     e.stopPropagation();
     handler();
@@ -87,53 +105,91 @@ export function showEquationMenu(targetObj, data) {
   target = targetObj;
 
   const info = analyzeEquation(data);
+  const methods = info.isFunction ? methodsFor(info.degree, info.indepVar) : [];
+
   menuEl = document.createElement('div');
   menuEl.id = 'equation-menu';
+
+  const row = document.createElement('div');
+  row.className = 'em-row';
+  menuEl.appendChild(row);
+
+  // Method picker row (revealed when Steps is clicked, if several methods apply).
+  const methodRow = document.createElement('div');
+  methodRow.className = 'em-methods hidden';
+
+  const runSteps = (method) => {
+    const via = method ? ` using ${method.phrase}` : '';
+    solveToBoard(
+      `${info.expr} = 0 for ${info.indepVar}. Show a concise numbered step-by-step ` +
+        `solution${via}. Plain text only — no markdown or LaTeX.`,
+      aiModel(),
+      target,
+      method ? `Steps · ${method.label}` : 'Steps'
+    );
+  };
+
+  methods.forEach((method) => {
+    methodRow.appendChild(
+      makeButton(method.label, `Step-by-step using ${method.phrase}`, () => {
+        methodRow.classList.add('hidden');
+        positionMenu();
+        runSteps(method);
+      })
+    );
+  });
 
   const label = document.createElement('span');
   label.className = 'em-label';
   label.textContent = info.isFunction ? `${info.dep} = ${info.expr}` : 'equation';
-  menuEl.appendChild(label);
+  row.appendChild(label);
 
   if (info.isFunction && data.ranges && Object.keys(data.ranges).length) {
-    menuEl.appendChild(makeButton('📈 Plot', 'Plot this function', () => drawGraph()));
+    row.appendChild(makeButton('📈 Plot', 'Plot this function', () => drawGraph()));
   }
 
   if (info.isFunction) {
-    menuEl.appendChild(
-      makeButton(`Solve =0`, `Solve ${info.expr} = 0 for ${info.indepVar}`, () => {
-        appendToOutput(`<b>Solving</b> ${info.expr} = 0 for ${info.indepVar}…`);
-        solveEquationFromText(
-          `Solve ${info.expr} = 0 for ${info.indepVar}. Give the exact solution(s), concisely.`,
-          aiModel()
+    row.appendChild(
+      makeButton('Solve =0', `Solve ${info.expr} = 0 for ${info.indepVar}`, () => {
+        solveToBoard(
+          `${info.expr} = 0 for ${info.indepVar}. Give the exact solution(s) only, ` +
+            `concise. Plain text only — no markdown or LaTeX.`,
+          aiModel(),
+          target,
+          'Solution'
         );
       })
     );
 
-    menuEl.appendChild(
-      makeButton('📝 Steps', 'Show step-by-step solution', () => {
-        const via = info.method ? ` using the ${info.method}` : '';
-        appendToOutput(`<b>Step-by-step</b> for ${info.expr} = 0${via}…`);
-        solveEquationFromText(
-          `Solve ${info.expr} = 0 for ${info.indepVar} step by step${via}. ` +
-            `Number each step and keep it concise.`,
-          aiModel()
-        );
-      })
-    );
+    if (methods.length > 1) {
+      row.appendChild(
+        makeButton('📝 Steps ▾', 'Show step-by-step (choose a method)', () => {
+          methodRow.classList.toggle('hidden');
+          positionMenu();
+        })
+      );
+    } else if (methods.length === 1) {
+      row.appendChild(
+        makeButton('📝 Steps', `Step-by-step (${methods[0].label})`, () => runSteps(methods[0]))
+      );
+    }
   }
 
-  menuEl.appendChild(
-    makeButton('⧉ Copy', 'Copy equation text', () => {
-      const text = target && target.text ? target.text : `${info.dep} = ${info.expr}`;
-      if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
-    })
+  row.appendChild(
+    makeButton(
+      '⧉ Copy',
+      'Copy equation text',
+      () => {
+        const text = target && target.text ? target.text : `${info.dep} = ${info.expr}`;
+        if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+      }
+    )
   );
 
-  const close = makeButton('✕', 'Dismiss', hideEquationMenu);
-  close.className = 'em-close';
-  menuEl.appendChild(close);
+  const close = makeButton('✕', 'Dismiss', hideEquationMenu, 'em-close');
+  row.appendChild(close);
 
+  menuEl.appendChild(methodRow);
   document.body.appendChild(menuEl);
   positionMenu();
 
