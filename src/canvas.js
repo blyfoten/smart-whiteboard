@@ -23,11 +23,26 @@ function _getTouchCenter(t1, t2) {
 function _setupPinchZoom(canvas) {
   const upperEl = canvas.upperCanvasEl;
 
+  // Discard any free-draw stroke that's mid-flight (e.g. the first finger of a
+  // pinch already pressed down) so it isn't committed as a stray dot.
+  const abortFreeDraw = () => {
+    const brush = canvas.freeDrawingBrush;
+    if (brush && typeof brush._reset === 'function') brush._reset();
+    canvas._isCurrentlyDrawing = false;
+    if (canvas.contextTop) canvas.clearContext(canvas.contextTop);
+  };
+
+  // Safety net: if a path still gets created during/just after a pinch, drop it.
+  canvas.on('path:created', (e) => {
+    if (_isPinching && e.path) canvas.remove(e.path);
+  });
+
   upperEl.addEventListener('touchstart', (e) => {
     if (e.touches.length === 2) {
       _isPinching = true;
       canvas.isDrawingMode = false;
       canvas.selection = false;
+      abortFreeDraw();
       _lastPinchDist = _getTouchDistance(e.touches[0], e.touches[1]);
       _lastPinchCenter = _getTouchCenter(e.touches[0], e.touches[1]);
       e.preventDefault();
@@ -68,6 +83,7 @@ function _setupPinchZoom(canvas) {
   upperEl.addEventListener('touchend', (e) => {
     if (e.touches.length < 2 && _isPinching) {
       _isPinching = false;
+      abortFreeDraw();
       canvas.isDrawingMode = true;
       canvas.selection = false;
     }
