@@ -44,13 +44,23 @@ function _axesPlugin(depVar) {
       const ctx = chart.ctx;
       ctx.save();
       ctx.fillStyle = INK;
-      ctx.font = "600 18px 'Caveat', cursive";
 
-      // Arrowheads at the positive ends.
+      // y-axis numbers — drawn ourselves to the LEFT of the axis. Chart renders
+      // them centered on the line for an origin-positioned axis, so its own y
+      // labels are disabled (ticks.display:false) and we place them here. Skip 0
+      // (the x-axis already labels the origin).
+      ctx.font = "15px 'Caveat', cursive";
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      (ys.ticks || []).forEach((t) => {
+        if (t.value === 0) return;
+        ctx.fillText(String(t.value), x0 - 8, ys.getPixelForValue(t.value));
+      });
+
+      // Arrowheads at the positive ends, then the axis names just past them.
+      ctx.font = "600 18px 'Caveat', cursive";
       _arrowhead(ctx, xs.right, y0, 'right');
       _arrowhead(ctx, x0, ys.top, 'up');
-
-      // Axis names just past each arrowhead.
       ctx.textAlign = 'right';
       ctx.textBaseline = 'top';
       ctx.fillText('x', xs.right - 4, y0 + 7);
@@ -137,8 +147,9 @@ export function renderGraph(dataPoints, dependentVariable) {
           },
           y: {
             position: { x: 0 }, // y-axis drawn through the origin
-            // Push the numbers off the axis line and align them to its left.
-            ticks: { color: INK, font: tickFont, maxTicksLimit: 9, padding: 10, crossAlign: 'far', mirror: false },
+            // Chart centers labels on an origin axis; we draw them ourselves to
+            // the left in the plugin. Keep the tick marks (grid.drawTicks).
+            ticks: { display: false, maxTicksLimit: 9 },
             border: { color: INK, width: 2 },
             grid,
           },
