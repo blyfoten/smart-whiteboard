@@ -182,6 +182,7 @@ export async function solveToBoard(instruction, model, anchor, heading) {
         : `<b>Error:</b><br>${data.message || 'Unknown error'}`,
       !ok
     );
+    return { ok, text };
   } catch (err) {
     console.error('Error:', err);
     if (block) {
@@ -189,6 +190,7 @@ export async function solveToBoard(instruction, model, anchor, heading) {
       canvas.requestRenderAll();
     }
     appendOutput(`<b>Error:</b><br>${err.message || 'Communication error with server'}`, true);
+    return { ok: false, text: String(err.message || err) };
   }
 }
 
@@ -308,12 +310,15 @@ export async function extractEquation() {
       canvas.setActiveObject(eqText);
       canvas.requestRenderAll();
       showEquationMenu(eqText, window.extractedEquationData);
+      return window.extractedEquationData;
     } else {
       appendOutput(`<b>Error extracting equation:</b><br>${data.message || 'Unknown error'}`, true);
+      return null;
     }
   } catch (error) {
     console.error('Error:', error);
     appendOutput(`<b>Error:</b><br>${error.message || 'Unknown error during extraction'}`, true);
+    return null;
   }
 }
 

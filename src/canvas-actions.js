@@ -11,9 +11,32 @@
 import { getCanvas, clearCanvas } from './canvas.js';
 import { Line, Rect, Ellipse, IText, Path } from 'fabric';
 import { renderGraph } from './graph.js';
+import { extractEquation, solveToBoard } from './api.js';
+import { getCurrentModel } from './ui.js';
 
 const STROKE = 'black';
 const STROKE_WIDTH = 4;
+
+// AI solve/steps need an LLM; math.js can't do symbolic work.
+function aiModel() {
+  const m = getCurrentModel();
+  return m === 'math' ? 'gpt' : m;
+}
+
+// The most recently analyzed equation object — the anchor under which the voice
+// agent writes its solution/steps block.
+function lastAnalyzedEquation(canvas) {
+  const ext = canvas.getObjects().filter((o) => o._isExtracted);
+  return ext.length ? ext[ext.length - 1] : null;
+}
+
+// The independent variable of the last analyzed equation (defaults to x).
+function independentVar() {
+  const d = window.extractedEquationData;
+  if (d && d.ranges && Object.keys(d.ranges).length) return Object.keys(d.ranges)[0];
+  if (d && d.scope && Object.keys(d.scope).length) return Object.keys(d.scope)[0];
+  return 'x';
+}
 let _idCounter = 0;
 
 function num(v, d = 0) {
@@ -221,6 +244,30 @@ export async function executeAction(name, args = {}) {
       canvas.add(cloned);
       canvas.requestRenderAll();
       return { ok: true, id: ensureId(cloned) };
+    }
+    case 'analyze_equation': {
+      const data = await extractEquation();
+      if (!data) return { ok: false, message: 'could not read an equation from the board' };
+      return { ok: true, equation: `${data.dependentVariable} = ${data.equation}` };
+    }
+    case 'solve_equation':
+    case 'show_steps': {
+      const expr = String(args.expression || (window.extractedEquationData && window.extractedEquationData.equation) || '').trim();
+      if (!expr) return { ok: false, message: 'no equation — call analyze_equation first or pass expression' };
+      const variable = independentVar();
+      const anchor = lastAnalyzedEquation(canvas);
+      let instruction;
+      let heading;
+      if (name === 'show_steps') {
+        const via = args.method ? ` using ${args.method}` : '';
+        instruction = `${expr} = 0 for ${variable}. Show a concise numbered step-by-step solution${via}. Plain text only — no markdown or LaTeX.`;
+        heading = args.method ? `Steps · ${args.method}` : 'Steps';
+      } else {
+        instruction = `${expr} = 0 for ${variable}. Give the exact solution(s) only, concise. Plain text only — no markdown or LaTeX.`;
+        heading = 'Solution';
+      }
+      const res = await solveToBoard(instruction, aiModel(), anchor, heading);
+      return res && res.ok ? { ok: true, result: res.text } : { ok: false, message: (res && res.text) || 'solve failed' };
     }
     case 'clear_board': {
       clearCanvas(canvas);
