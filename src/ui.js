@@ -3,6 +3,7 @@
 import { getCanvas, undoLast, saveScreenshot, clearCanvas } from './canvas.js';
 import { IText } from 'fabric';
 import { solveEquationFromText, extractEquation, drawGraph } from './api.js';
+import { redrawLastGraph } from './graph.js';
 import { toggleRecognition } from './speech.js';
 
 let currentModel = 'math';
@@ -109,6 +110,11 @@ function initSettingsMenu() {
 
 export function initializeEventListeners() {
   initSettingsMenu();
+
+  const gridSel = document.getElementById('graph-grid-select');
+  if (gridSel) {
+    gridSel.addEventListener('change', () => redrawLastGraph());
+  }
 
   const startRecordBtn = document.getElementById('start-record-btn');
   if (startRecordBtn) {
