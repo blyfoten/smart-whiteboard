@@ -57,16 +57,27 @@ function _axesPlugin(depVar) {
         ctx.fillText(String(t.value), x0 - 8, ys.getPixelForValue(t.value));
       });
 
-      // Arrowheads at the positive ends, then the axis names just past them.
+      // Arrowheads: extend the axis a little past the last tick into the
+      // layout padding, then the axis names just outside the arrowheads.
+      const xEnd = xs.right + 14;
+      const yEnd = ys.top - 14;
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(xs.right, y0);
+      ctx.lineTo(xEnd, y0);
+      ctx.moveTo(x0, ys.top);
+      ctx.lineTo(x0, yEnd);
+      ctx.stroke();
+      _arrowhead(ctx, xEnd, y0, 'right');
+      _arrowhead(ctx, x0, yEnd, 'up');
+
       ctx.font = "600 18px 'Caveat', cursive";
-      _arrowhead(ctx, xs.right, y0, 'right');
-      _arrowhead(ctx, x0, ys.top, 'up');
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'top';
-      ctx.fillText('x', xs.right - 4, y0 + 7);
       ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillText(depVar, x0 + 8, ys.top - 2);
+      ctx.textBaseline = 'middle';
+      ctx.fillText('x', xEnd + 6, y0);
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(depVar, x0 + 8, yEnd - 2);
       ctx.restore();
     },
   };
@@ -136,12 +147,14 @@ export function renderGraph(dataPoints, dependentVariable) {
       options: {
         responsive: false,
         animation: false,
-        layout: { padding: 6 },
+        // Extra right/top room so the axis arrows + x/y names sit past the last tick.
+        layout: { padding: { left: 8, right: 34, top: 26, bottom: 8 } },
         scales: {
           x: {
             type: 'linear',
             position: { y: 0 }, // x-axis drawn through the origin
-            ticks: { color: INK, font: tickFont, maxTicksLimit: 11, padding: 6 },
+            // Hide the 0 at the origin; the axes crossing already marks it.
+            ticks: { color: INK, font: tickFont, maxTicksLimit: 11, padding: 6, callback: (v) => (v === 0 ? '' : v) },
             border: { color: INK, width: 2 },
             grid,
           },
