@@ -2,7 +2,7 @@
 
 import { getCanvas, undoLast, saveScreenshot, clearCanvas } from './canvas.js';
 import { IText } from 'fabric';
-import { solveEquation, solveEquationFromText, extractEquation, drawGraph } from './api.js';
+import { solveEquationFromText, extractEquation, drawGraph } from './api.js';
 import { toggleRecognition } from './speech.js';
 
 let currentModel = 'math';
@@ -84,22 +84,22 @@ export function setupCanvasEventListeners() {
   });
 }
 
-function initMoreMenu() {
-  const moreBtn = document.getElementById('more-btn');
-  const moreMenu = document.getElementById('more-menu');
-  if (!moreBtn || !moreMenu) return;
+function initSettingsMenu() {
+  const btn = document.getElementById('settings-btn');
+  const menu = document.getElementById('settings-menu');
+  if (!btn || !menu) return;
 
   const setOpen = (open) => {
-    moreMenu.classList.toggle('hidden', !open);
-    moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    menu.classList.toggle('hidden', !open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   };
 
-  moreBtn.addEventListener('click', (e) => {
+  btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    setOpen(moreMenu.classList.contains('hidden'));
+    setOpen(menu.classList.contains('hidden'));
   });
-  // Keep the menu open when interacting inside it.
-  moreMenu.addEventListener('click', (e) => e.stopPropagation());
+  // Keep the menu open when interacting inside it (but let selects work).
+  menu.addEventListener('click', (e) => e.stopPropagation());
   // Dismiss on outside click or Escape.
   document.addEventListener('click', () => setOpen(false));
   document.addEventListener('keydown', (e) => {
@@ -108,7 +108,7 @@ function initMoreMenu() {
 }
 
 export function initializeEventListeners() {
-  initMoreMenu();
+  initSettingsMenu();
 
   const startRecordBtn = document.getElementById('start-record-btn');
   if (startRecordBtn) {
@@ -162,52 +162,19 @@ export function initializeEventListeners() {
     });
   }
 
-  const uiElement = document.querySelector('.ui-element');
-  if (!uiElement) return;
+  // Solving is now a contextual action on an analyzed equation (see
+  // equation-menu.js), so there's no standalone Solve button to wire.
 
-  // Create solve button if missing
-  if (!document.getElementById('solve-eq-btn')) {
-    const solveBtn = document.createElement('button');
-    solveBtn.id = 'solve-eq-btn';
-    solveBtn.textContent = 'Solve Equation';
-    solveBtn.addEventListener('click', solveEquation);
-    uiElement.insertBefore(solveBtn, document.getElementById('status'));
-  } else {
-    document.getElementById('solve-eq-btn').addEventListener('click', solveEquation);
-  }
-
-  // Create graph button if missing
-  if (!document.getElementById('graph-btn')) {
-    const graphBtn = document.createElement('button');
-    graphBtn.id = 'graph-btn';
-    graphBtn.textContent = 'Draw Graph';
+  const graphBtn = document.getElementById('graph-btn');
+  if (graphBtn) {
     graphBtn.addEventListener('click', drawGraph);
-    const solveBtn = document.getElementById('solve-eq-btn');
-    if (solveBtn) {
-      uiElement.insertBefore(graphBtn, solveBtn.nextSibling);
-    } else {
-      uiElement.insertBefore(graphBtn, document.getElementById('status'));
-    }
-  } else {
-    document.getElementById('graph-btn').addEventListener('click', drawGraph);
   }
 
-  // Force solve button
-  let forceSolveBtn = document.getElementById('force-solve-btn');
-  if (!forceSolveBtn) {
-    forceSolveBtn = document.createElement('button');
-    forceSolveBtn.id = 'force-solve-btn';
-    forceSolveBtn.textContent = 'Force Solve';
-    forceSolveBtn.style.backgroundColor = '#ffdddd';
-    const debugOutput = document.getElementById('debug-output');
-    if (debugOutput) {
-      uiElement.insertBefore(forceSolveBtn, debugOutput);
-    } else {
-      uiElement.appendChild(forceSolveBtn);
-    }
+  const forceSolveBtn = document.getElementById('force-solve-btn');
+  if (forceSolveBtn) {
+    forceSolveBtn.addEventListener('click', () => {
+      const equation = prompt('Enter equation to solve (e.g. x^2 + 3*x - 5 = 0):');
+      if (equation) solveEquationFromText(equation);
+    });
   }
-  forceSolveBtn.addEventListener('click', () => {
-    const equation = prompt('Enter equation to solve (e.g. x^2 + 3*x - 5 = 0):');
-    if (equation) solveEquationFromText(equation);
-  });
 }

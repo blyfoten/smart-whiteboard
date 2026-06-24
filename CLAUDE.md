@@ -36,8 +36,9 @@ Providers live behind a small interface in **`providers/`**: `openai.js`, `gemin
 
 `src/index.js` is a thin orchestrator wired up on `DOMContentLoaded`. Module responsibilities:
 - `canvas.js` — Fabric.js canvas lifecycle (singleton via `getCanvas()`), free-draw brush, resize, bounding-box detection, crop-to-content (exports a JPEG data URL for the vision API), pinch-to-zoom/pan, undo, save-PNG, clear.
-- `api.js` — all `fetch` calls to the backend; owns the extract → graph data flow.
-- `ui.js` — **all** button/dropdown event wiring (`initializeEventListeners`), the `currentModel` state (`getCurrentModel()`), and the double-click-to-add-IText behavior.
+- `api.js` — all `fetch` calls to the backend; owns the analyze (extract) → graph data flow. After analysis the equation is rendered as clean text **in place** of the handwriting (one-press Undo restores the ink) and `showEquationMenu` is opened beside it.
+- `equation-menu.js` — Word-style floating action menu shown next to a freshly analyzed equation. Content-aware (a function → Plot / Solve =0 / Steps); AI actions coerce the `math` model to `gpt`. Repositions on `after:render`, dismisses on `selection:cleared`/Escape.
+- `ui.js` — **all** button/dropdown event wiring (`initializeEventListeners`), the `currentModel` state (`getCurrentModel()`), the ⚙ Settings popover (`initSettingsMenu`), and the double-click-to-add-IText behavior. (Solving is contextual now — no standalone Solve button.)
 - `output.js` — the "Solution Output" panel: `appendToOutput()` result cards, clear, mobile collapse (`initOutputPanel`).
 - `modes.js` — interaction modes (draw/select/shapes), the toolbar + Space-to-select, and the shape-beautify hook.
 - `shape-classifier.js` (pure geometry, unit-tested) + `shapes.js` (Fabric builders) — freehand stroke → clean primitive recognition.
@@ -49,7 +50,7 @@ Providers live behind a small interface in **`providers/`**: `openai.js`, `gemin
 ### Key cross-cutting patterns
 
 - **All UI behavior lives in the bundle.** `public/index.html` has **no inline script** (de-duplicated in §4.2) — every handler is wired in `src/` on `DOMContentLoaded`. A few `window` globals remain as a light bridge/state holder: `window.canvas`, `window.solveEquation`, `window.extractedEquationData` (last extracted equation), and `window.appendToOutput` (back-compat alias; `api.js` imports `appendToOutput` from `output.js` directly).
-- **End-to-end graph flow:** draw → `cropCanvasToBoundingBox` (JPEG data URL) → `POST /extract` (`{ image, provider }`) → store JSON on `window.extractedEquationData` → `/graph` → `renderGraph` draws via Chart.js offscreen and adds a Fabric image.
+- **End-to-end analyze flow:** draw → `cropCanvasToBoundingBox` (JPEG data URL) → `POST /extract` (`{ image, provider }`) → store JSON on `window.extractedEquationData` → replace the handwriting with clean text in place → open the contextual menu. Plotting is no longer automatic: the menu's **Plot** action (or the 📈 toolbar button) calls `drawGraph()` → `/graph` → `renderGraph` draws via Chart.js offscreen and adds a Fabric image (`_isGraph`).
 
 ## Notes / known rough edges
 

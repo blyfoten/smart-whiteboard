@@ -5,6 +5,7 @@ import { IText } from 'fabric';
 import { getCurrentModel } from './ui.js';
 import { renderGraph } from './graph.js';
 import { appendToOutput } from './output.js';
+import { showEquationMenu, hideEquationMenu } from './equation-menu.js';
 
 function appendOutput(html, isError) {
   appendToOutput(html, isError);
@@ -82,8 +83,8 @@ function boundingBoxOf(objects) {
   return { minX, minY, maxX, maxY };
 }
 
-export function solveEquationFromText(equation) {
-  const model = getCurrentModel();
+export function solveEquationFromText(equation, modelOverride) {
+  const model = modelOverride || getCurrentModel();
   appendOutput(`<b>Solving equation:</b> ${equation}<br><b>Using model:</b> ${model}<br><i>Loading...</i>`);
 
   fetch('/solve', {
@@ -140,6 +141,8 @@ export async function extractEquation() {
     alert('Canvas not found! Please refresh the page and try again.');
     return;
   }
+
+  hideEquationMenu();
 
   const boundingBox = getCanvasBoundingBox(canvas);
   const croppedDataURL = await cropCanvasToBoundingBox(canvas);
@@ -211,10 +214,14 @@ export async function extractEquation() {
       eqText._replacedInk = inkObjects;
       inkObjects.forEach((o) => canvas.remove(o));
       canvas.add(eqText);
-      canvas.requestRenderAll();
 
       window.extractedEquationData = { equation, dependentVariable, scope, ranges };
-      await drawGraph();
+
+      // Leave the result selected and pop a content-aware action menu next to it
+      // (Plot / Solve / Steps), Word-style — instead of auto-plotting.
+      canvas.setActiveObject(eqText);
+      canvas.requestRenderAll();
+      showEquationMenu(eqText, window.extractedEquationData);
     } else {
       appendOutput(`<b>Error extracting equation:</b><br>${data.message || 'Unknown error'}`, true);
     }
