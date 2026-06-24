@@ -11,6 +11,57 @@ let _lastGraph = null;
 
 const INK = '#1f2937'; // slate ink for axes/labels — reads like pen on whiteboard
 
+// A small filled arrowhead at the positive end of an axis. dir: 'right' | 'up'.
+function _arrowhead(ctx, x, y, dir) {
+  const s = 7;
+  ctx.beginPath();
+  if (dir === 'right') {
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - s, y - s * 0.6);
+    ctx.lineTo(x - s, y + s * 0.6);
+  } else {
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - s * 0.6, y + s);
+    ctx.lineTo(x + s * 0.6, y + s);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+// Chart.js plugin: draw arrowheads at the axis ends and the axis names (x and
+// the dependent variable) beside those ends, instead of Chart's built-in axis
+// titles (which sit awkwardly mid-axis when the axes pass through the origin).
+function _axesPlugin(depVar) {
+  return {
+    id: 'handDrawnAxes',
+    afterDatasetsDraw(chart) {
+      const xs = chart.scales.x;
+      const ys = chart.scales.y;
+      if (!xs || !ys) return;
+      const x0 = xs.getPixelForValue(0);
+      const y0 = ys.getPixelForValue(0);
+
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.fillStyle = INK;
+      ctx.font = "600 18px 'Caveat', cursive";
+
+      // Arrowheads at the positive ends.
+      _arrowhead(ctx, xs.right, y0, 'right');
+      _arrowhead(ctx, x0, ys.top, 'up');
+
+      // Axis names just past each arrowhead.
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillText('x', xs.right - 4, y0 + 7);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(depVar, x0 + 8, ys.top - 2);
+      ctx.restore();
+    },
+  };
+}
+
 function _getOffscreenCanvas() {
   if (!_offscreenCanvas) {
     _offscreenCanvas = document.createElement('canvas');
@@ -42,7 +93,6 @@ export function renderGraph(dataPoints, dependentVariable) {
 
   const offscreen = _getOffscreenCanvas();
   const gridOn = _gridlinesOn();
-  const axisFont = { family: 'Caveat, cursive', size: 16, weight: '600' };
   const tickFont = { family: 'Caveat, cursive', size: 15 };
 
   // A grid config: tick marks always (on the axes), full gridlines only when on.
@@ -81,15 +131,14 @@ export function renderGraph(dataPoints, dependentVariable) {
           x: {
             type: 'linear',
             position: { y: 0 }, // x-axis drawn through the origin
-            title: { display: true, text: 'x', color: INK, font: axisFont },
-            ticks: { color: INK, font: tickFont, maxTicksLimit: 11 },
+            ticks: { color: INK, font: tickFont, maxTicksLimit: 11, padding: 6 },
             border: { color: INK, width: 2 },
             grid,
           },
           y: {
             position: { x: 0 }, // y-axis drawn through the origin
-            title: { display: true, text: dependentVariable, color: INK, font: axisFont },
-            ticks: { color: INK, font: tickFont, maxTicksLimit: 9 },
+            // Push the numbers off the axis line and align them to its left.
+            ticks: { color: INK, font: tickFont, maxTicksLimit: 9, padding: 10, crossAlign: 'far', mirror: false },
             border: { color: INK, width: 2 },
             grid,
           },
@@ -99,6 +148,7 @@ export function renderGraph(dataPoints, dependentVariable) {
           tooltip: { enabled: false },
         },
       },
+      plugins: [_axesPlugin(dependentVariable)],
     });
 
     // Chart.js needs a frame to render with animation:false
