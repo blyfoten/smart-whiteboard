@@ -35,9 +35,9 @@ export function renderGraph(dataPoints, dependentVariable) {
         label: `${dependentVariable} = f(x)`,
         data: dataPoints.map(p => ({ x: p.x, y: p.y })),
         borderColor: 'rgb(75, 192, 192)',
-        backgroundColor: 'rgba(75, 192, 192, 0.1)',
-        tension: 0.1,
-        fill: true,
+        borderWidth: 2.5,
+        tension: 0.25,
+        fill: false,
         pointRadius: 0,
       }],
     },
@@ -49,7 +49,7 @@ export function renderGraph(dataPoints, dependentVariable) {
         y: { title: { display: true, text: dependentVariable } },
       },
       plugins: {
-        legend: { display: true, position: 'top' },
+        legend: { display: false },
       },
     },
   });
