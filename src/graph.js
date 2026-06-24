@@ -2,6 +2,7 @@
 
 import Chart from 'chart.js/auto';
 import { getCanvas, getCanvasBoundingBox } from './canvas.js';
+import { getMode } from './modes.js';
 import { Image as FabricImage } from 'fabric';
 
 // Offscreen canvas for rendering the chart
@@ -54,7 +55,7 @@ function _axesPlugin(depVar) {
       ctx.textBaseline = 'middle';
       (ys.ticks || []).forEach((t) => {
         if (t.value === 0) return;
-        ctx.fillText(String(t.value), x0 - 8, ys.getPixelForValue(t.value));
+        ctx.fillText(String(t.value), x0 - 14, ys.getPixelForValue(t.value));
       });
 
       // Arrowheads: extend the axis a little past the last tick into the
@@ -207,8 +208,13 @@ export function renderGraph(dataPoints, dependentVariable) {
         });
 
         canvas.add(fabricImg);
-        // Temporarily disable drawing mode to allow interaction with graph
-        canvas.setActiveObject(fabricImg);
+        // Only leave the graph selected if the user is actually in Select mode;
+        // otherwise drop the selection so drawing/shapes aren't interrupted.
+        if (getMode() === 'select') {
+          canvas.setActiveObject(fabricImg);
+        } else {
+          canvas.discardActiveObject();
+        }
         canvas.requestRenderAll();
       };
       imgEl.src = dataURL;
