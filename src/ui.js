@@ -84,7 +84,32 @@ export function setupCanvasEventListeners() {
   });
 }
 
+function initMoreMenu() {
+  const moreBtn = document.getElementById('more-btn');
+  const moreMenu = document.getElementById('more-menu');
+  if (!moreBtn || !moreMenu) return;
+
+  const setOpen = (open) => {
+    moreMenu.classList.toggle('hidden', !open);
+    moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+
+  moreBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setOpen(moreMenu.classList.contains('hidden'));
+  });
+  // Keep the menu open when interacting inside it.
+  moreMenu.addEventListener('click', (e) => e.stopPropagation());
+  // Dismiss on outside click or Escape.
+  document.addEventListener('click', () => setOpen(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setOpen(false);
+  });
+}
+
 export function initializeEventListeners() {
+  initMoreMenu();
+
   const startRecordBtn = document.getElementById('start-record-btn');
   if (startRecordBtn) {
     startRecordBtn.addEventListener('click', toggleRecognition);

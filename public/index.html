@@ -75,7 +75,15 @@
     button:hover {
       background-color: #e0e0e0;
     }
-    #mode-group { display: flex; gap: 4px; padding-right: 6px; border-right: 1px solid #ddd; margin-right: 2px; }
+    /* Grouped icon toolbar: related actions sit together, separated by a divider. */
+    .btn-group { display: flex; align-items: center; gap: 4px; padding-right: 6px; border-right: 1px solid #ddd; margin-right: 2px; }
+    .icon-btn {
+      font-size: 17px;
+      line-height: 1;
+      padding: 6px 8px;
+      min-width: 36px;
+      text-align: center;
+    }
     .mode-btn.active {
       background-color: #4a90d9;
       color: #fff;
@@ -84,7 +92,29 @@
     .mode-btn.active:hover { background-color: #3a7bc8; }
     #voice-btn.active { background-color: #e53935; color: #fff; border-color: #c62828; }
     #voice-btn.active:hover { background-color: #c62828; }
+    .toolbar-settings { gap: 8px; }
     #smart-shapes-container { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+    /* "More" overflow menu for legacy/dev tools. */
+    #more-wrap { position: relative; }
+    #more-menu {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 6px;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 20;
+      min-width: 210px;
+    }
+    #more-menu.hidden { display: none; }
+    #more-menu #force-solve-btn { background-color: #ffdddd; }
+    #more-menu #test-section { display: flex; gap: 4px; }
     #test-section {
       display: flex;
       align-items: center;
@@ -184,40 +214,52 @@
     <canvas id="whiteboard"></canvas>
     <!-- graph is now rendered as fabric object on canvas -->
     <div class="ui-element">
-      <div id="mode-group">
-        <button id="mode-draw" class="mode-btn active" title="Freehand drawing">✏️ Draw</button>
-        <button id="mode-select" class="mode-btn" title="Select & move (or hold Space)">⬚ Select</button>
-        <button id="mode-shapes" class="mode-btn" title="Draw shapes that snap clean">◇ Shapes</button>
+      <div id="mode-group" class="btn-group">
+        <button id="mode-draw" class="mode-btn icon-btn active" title="Draw (freehand)" aria-label="Draw">✏️</button>
+        <button id="mode-select" class="mode-btn icon-btn" title="Select &amp; move (or hold Space)" aria-label="Select">⬚</button>
+        <button id="mode-shapes" class="mode-btn icon-btn" title="Shapes (snap to clean shapes)" aria-label="Shapes">◇</button>
       </div>
-      <button id="voice-btn" title="Conversational voice mode (Gemini Live)">🎤 Voice</button>
-      <button id="start-record-btn">Start Voice Recognition</button>
-      <button id="extract-eq-btn">Extract Equation</button>
-      <button id="solve-eq-btn">Solve Equation</button>
-      <button id="graph-btn">Draw Graph</button>
-      <button id="undo-btn">Undo</button>
-      <button id="clear-btn">Clear Canvas</button>
-      <button id="save-btn">Save PNG</button>
+      <div class="btn-group">
+        <button id="voice-btn" class="icon-btn" title="Voice mode (Gemini Live)" aria-label="Voice mode">🎤</button>
+        <button id="extract-eq-btn" class="icon-btn" title="Extract equation from drawing" aria-label="Extract equation">🔎</button>
+        <button id="solve-eq-btn" class="icon-btn" title="Solve equation" aria-label="Solve equation">🟰</button>
+        <button id="graph-btn" class="icon-btn" title="Draw graph" aria-label="Draw graph">📈</button>
+      </div>
+      <div class="btn-group">
+        <button id="undo-btn" class="icon-btn" title="Undo" aria-label="Undo">↩️</button>
+        <button id="clear-btn" class="icon-btn" title="Clear canvas" aria-label="Clear canvas">🗑️</button>
+        <button id="save-btn" class="icon-btn" title="Save as PNG" aria-label="Save PNG">💾</button>
+      </div>
+      <div class="btn-group toolbar-settings">
+        <div id="model-select-container" title="AI model used for Extract / Solve">
+          <label for="model-select">AI:</label>
+          <select id="model-select">
+            <option value="math">Math.js (Simple)</option>
+            <option value="gpt">GPT (Advanced)</option>
+            <option value="gemini">Gemini (Advanced)</option>
+            <option value="claude">Claude (Advanced)</option>
+          </select>
+        </div>
+        <div id="smart-shapes-container" title="Smart-shape snapping behavior">
+          <label for="smart-shapes-select">Snap:</label>
+          <select id="smart-shapes-select">
+            <option value="off">Off</option>
+            <option value="manual" selected>Manual (Shapes mode)</option>
+            <option value="auto">Auto</option>
+          </select>
+        </div>
+      </div>
       <p id="status"></p>
-      <div id="model-select-container">
-        <label for="model-select">AI Model: </label>
-        <select id="model-select">
-          <option value="math">Math.js (Simple)</option>
-          <option value="gpt">GPT (Advanced)</option>
-          <option value="gemini">Gemini (Advanced)</option>
-          <option value="claude">Claude (Advanced)</option>
-        </select>
-      </div>
-      <div id="smart-shapes-container">
-        <label for="smart-shapes-select">Smart shapes:</label>
-        <select id="smart-shapes-select">
-          <option value="off">Off</option>
-          <option value="manual" selected>Manual (Shapes mode)</option>
-          <option value="auto">Auto</option>
-        </select>
-      </div>
-      <div id="test-section">
-        <input type="text" id="test-equation" placeholder="e.g., x^2 + 3x - 5 = 0" />
-        <button id="add-test-equation-btn">Add Test Equation</button>
+      <div id="more-wrap">
+        <button id="more-btn" class="icon-btn" title="More tools" aria-label="More tools" aria-expanded="false">⋯</button>
+        <div id="more-menu" class="hidden">
+          <button id="start-record-btn">🎙️ Start Voice Recognition</button>
+          <button id="force-solve-btn">Force Solve…</button>
+          <div id="test-section">
+            <input type="text" id="test-equation" placeholder="e.g., x^2 + 3x - 5 = 0" />
+            <button id="add-test-equation-btn">Add Test Equation</button>
+          </div>
+        </div>
       </div>
     </div>
     
