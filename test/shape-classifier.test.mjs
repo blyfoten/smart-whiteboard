@@ -141,6 +141,27 @@ check('straight line stays line (not polyline)', () => {
   assert.equal(d?.type, 'line');
 });
 
+check('slightly-bent line → line (not split into segments)', () => {
+  const pts = [
+    ...line({ x: 50, y: 100 }, { x: 230, y: 116 }, 20),
+    ...line({ x: 230, y: 116 }, { x: 410, y: 104 }, 20),
+  ];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'line');
+});
+
+check('near-horizontal line snaps to horizontal', () => {
+  const d = classifyStroke(line({ x: 40, y: 100 }, { x: 360, y: 122 }));
+  assert.equal(d?.type, 'line');
+  assert.equal(d.a.y, d.b.y); // snapped flat
+});
+
+check('near-vertical line snaps to vertical', () => {
+  const d = classifyStroke(line({ x: 100, y: 40 }, { x: 118, y: 340 }));
+  assert.equal(d?.type, 'line');
+  assert.equal(d.a.x, d.b.x); // snapped upright
+});
+
 check('smooth open arc → null (not polyline)', () => {
   // A half-circle arc: gentle, continuous bend — must NOT straighten to segments.
   const pts = ellipsePts(200, 200, 120, 120, 60).slice(0, 31);

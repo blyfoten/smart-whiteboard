@@ -189,14 +189,51 @@ function rdp(points, eps) {
   return [a, b];
 }
 
+// Snap a segment to horizontal/vertical when its direction is within ~9° of an
+// axis, keeping `a` fixed and moving `b` onto the axis. Returns the new `b`.
+const ORTHO_TOL = Math.tan((9 * Math.PI) / 180);
+function snapSegment(a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (Math.abs(dy) <= Math.abs(dx) * ORTHO_TOL) return { x: b.x, y: a.y }; // horizontal
+  if (Math.abs(dx) <= Math.abs(dy) * ORTHO_TOL) return { x: a.x, y: b.y }; // vertical
+  return { x: b.x, y: b.y };
+}
+
+function snapLine(a, b) {
+  return { a: { x: a.x, y: a.y }, b: snapSegment(a, b) };
+}
+
+// Snap each segment of a polyline in turn (sequentially, so shared vertices stay
+// connected) — turns a hand-drawn right-angle into a clean one.
+function snapPolyline(v) {
+  const out = [{ x: v[0].x, y: v[0].y }];
+  for (let i = 1; i < v.length; i++) out.push(snapSegment(out[i - 1], v[i]));
+  return out;
+}
+
 // An open multi-segment stroke (an L, a staircase, a zig-zag of a few segments)
 // → its corner vertices, or null. Conservative: rejects curves, scribbles and
-// handwriting, which simplify to too many or too-soft vertices.
+// handwriting, which simplify to too many or too-soft vertices. A result that
+// barely bends overall is collapsed back to a single straight line.
 function detectPolyline(pts, bb) {
   const diag = Math.hypot(bb.w, bb.h);
   const eps = Math.max(6, 0.035 * diag);
   const v = rdp(pts, eps);
   if (v.length < 3 || v.length > 7) return null; // 2 = straight line; >7 = not clean
+
+  const A = v[0];
+  const B = v[v.length - 1];
+  const chord = dist(A, B);
+
+  // Near-straight overall (only a slight bow) → one straight line, not segments.
+  // This stops a slightly-wavy line from being chopped into several pieces.
+  let maxDev = 0;
+  for (const p of v) maxDev = Math.max(maxDev, pointLineDistance(p, A, B));
+  if (chord >= MIN_SIZE && maxDev < Math.max(18, 0.13 * chord)) {
+    const s = snapLine(A, B);
+    return { type: 'line', a: s.a, b: s.b };
+  }
 
   const minSeg = Math.max(MIN_SIZE * 0.7, 0.09 * diag);
   for (let i = 1; i < v.length; i++) {
@@ -204,12 +241,12 @@ function detectPolyline(pts, bb) {
   }
   // Every interior vertex must be a real corner (a sharp turn) — otherwise the
   // stroke is a smooth curve that RDP merely chopped into segments.
-  const TURN = (30 * Math.PI) / 180;
+  const TURN = (32 * Math.PI) / 180;
   for (let i = 1; i < v.length - 1; i++) {
     const t = angleTurn(v[i].x - v[i - 1].x, v[i].y - v[i - 1].y, v[i + 1].x - v[i].x, v[i + 1].y - v[i].y);
     if (t < TURN) return null;
   }
-  return { type: 'polyline', points: v.map((p) => ({ x: p.x, y: p.y })) };
+  return { type: 'polyline', points: snapPolyline(v) };
 }
 
 // Arrow: a mostly-straight shaft from start to the farthest point, followed by
@@ -264,7 +301,10 @@ export function classifyStroke(pts) {
     // and we fall through; an arrow's hook would otherwise read as "straight".
     const arrow = detectArrow(pts);
     if (arrow) return { type: 'arrow', a: arrow.a, b: arrow.b };
-    if (isStraight(pts)) return { type: 'line', a: { ...a }, b: { ...b } };
+    if (isStraight(pts)) {
+      const s = snapLine(a, b);
+      return { type: 'line', a: s.a, b: s.b };
+    }
     // Multi-segment straightening: an L / staircase / few-segment zig-zag.
     const poly = detectPolyline(pts, bb);
     if (poly) return poly;
