@@ -168,25 +168,30 @@ function countCorners(pts) {
   return count;
 }
 
-// Ramer–Douglas–Peucker: simplify a polyline to the fewest vertices that keep
-// every original point within `eps` of the simplified path. Used to straighten a
-// multi-segment freehand stroke into connected straight segments.
-function rdp(points, eps) {
-  if (points.length < 3) return points.slice();
-  let maxD = 0;
-  let idx = 0;
-  const a = points[0];
-  const b = points[points.length - 1];
-  for (let i = 1; i < points.length - 1; i++) {
-    const d = pointLineDistance(points[i], a, b);
-    if (d > maxD) { maxD = d; idx = i; }
+// Ramer–Douglas–Peucker, returning the kept vertex INDICES (always including the
+// endpoints). Indices let us check each resulting segment against its original
+// sub-stroke. Used to straighten a multi-segment freehand stroke.
+function rdpIndices(pts, eps) {
+  const keep = new Array(pts.length).fill(false);
+  keep[0] = true;
+  keep[pts.length - 1] = true;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [s, e] = stack.pop();
+    let maxD = 0;
+    let idx = -1;
+    for (let i = s + 1; i < e; i++) {
+      const d = pointLineDistance(pts[i], pts[s], pts[e]);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > eps && idx !== -1) {
+      keep[idx] = true;
+      stack.push([s, idx], [idx, e]);
+    }
   }
-  if (maxD > eps) {
-    const left = rdp(points.slice(0, idx + 1), eps);
-    const right = rdp(points.slice(idx), eps);
-    return left.slice(0, -1).concat(right);
-  }
-  return [a, b];
+  const out = [];
+  for (let i = 0; i < pts.length; i++) if (keep[i]) out.push(i);
+  return out;
 }
 
 // Snap a segment to horizontal/vertical when its direction is within ~9° of an
@@ -212,40 +217,85 @@ function snapPolyline(v) {
   return out;
 }
 
-// An open multi-segment stroke (an L, a staircase, a zig-zag of a few segments)
-// → its corner vertices, or null. Conservative: rejects curves, scribbles and
-// handwriting, which simplify to too many or too-soft vertices. A result that
-// barely bends overall is collapsed back to a single straight line.
+// An open multi-segment stroke (an L, a staircase, a U, a zig-zag of a few
+// segments) → its corner vertices, or null. Tolerant of a wobbly/bowed segment:
+// shallow (non-corner) vertices are merged out rather than rejecting the whole
+// stroke; a result that barely bends overall collapses back to a single line.
+// Stays conservative against curves via a per-segment straightness check.
 function detectPolyline(pts, bb) {
   const diag = Math.hypot(bb.w, bb.h);
-  const eps = Math.max(6, 0.035 * diag);
-  const v = rdp(pts, eps);
-  if (v.length < 3 || v.length > 7) return null; // 2 = straight line; >7 = not clean
+  const eps = Math.max(6, 0.04 * diag);
+  const idx = rdpIndices(pts, eps);
+  if (idx.length < 3) return null;
 
-  const A = v[0];
-  const B = v[v.length - 1];
-  const chord = dist(A, B);
-
-  // Near-straight overall (only a slight bow) → one straight line, not segments.
-  // This stops a slightly-wavy line from being chopped into several pieces.
-  let maxDev = 0;
-  for (const p of v) maxDev = Math.max(maxDev, pointLineDistance(p, A, B));
-  if (chord >= MIN_SIZE && maxDev < Math.max(18, 0.13 * chord)) {
-    const s = snapLine(A, B);
-    return { type: 'line', a: s.a, b: s.b };
+  // Merge out interior vertices that aren't real corners (gentle bends from a
+  // wobbly hand or a bowed segment), keeping only sharp turns.
+  const TURN = (33 * Math.PI) / 180;
+  let changed = true;
+  while (changed && idx.length > 2) {
+    changed = false;
+    for (let k = 1; k < idx.length - 1; k++) {
+      const a = pts[idx[k - 1]];
+      const b = pts[idx[k]];
+      const c = pts[idx[k + 1]];
+      if (angleTurn(b.x - a.x, b.y - a.y, c.x - b.x, c.y - b.y) < TURN) {
+        idx.splice(k, 1);
+        changed = true;
+        break;
+      }
+    }
   }
 
-  const minSeg = Math.max(MIN_SIZE * 0.7, 0.09 * diag);
+  // Collapsed to no real corners: a single straight-ish run → one line (if it
+  // really is line-like), else leave it as ink.
+  if (idx.length < 3) {
+    const a0 = pts[0];
+    const b0 = pts[pts.length - 1];
+    const chord = dist(a0, b0);
+    let maxDev = 0;
+    for (const p of pts) maxDev = Math.max(maxDev, pointLineDistance(p, a0, b0));
+    if (chord >= MIN_SIZE && maxDev < Math.max(20, 0.15 * chord)) {
+      const s = snapLine(a0, b0);
+      return { type: 'line', a: s.a, b: s.b };
+    }
+    return null;
+  }
+
+  if (idx.length > 12) return null; // implausibly many corners → not a clean polyline
+
+  const v = idx.map((i) => pts[i]);
+  const minSeg = Math.max(MIN_SIZE * 0.6, 0.05 * diag);
   for (let i = 1; i < v.length; i++) {
     if (dist(v[i - 1], v[i]) < minSeg) return null; // reject tiny zig-zag noise
   }
-  // Every interior vertex must be a real corner (a sharp turn) — otherwise the
-  // stroke is a smooth curve that RDP merely chopped into segments.
-  const TURN = (32 * Math.PI) / 180;
-  for (let i = 1; i < v.length - 1; i++) {
-    const t = angleTurn(v[i].x - v[i - 1].x, v[i].y - v[i - 1].y, v[i + 1].x - v[i].x, v[i + 1].y - v[i].y);
-    if (t < TURN) return null;
+
+  // Reject a smooth curve that survived as several corners all bending the same
+  // way (an arc RDP chopped into segments). A real open polyline has few corners
+  // or alternating ones (a staircase zig-zags); 3+ interior turns all in the same
+  // rotational direction means a curve, not a polyline. Turn signs are robust
+  // here because merging already removed the shallow (near-zero) vertices.
+  if (v.length - 2 >= 3) {
+    let sign = 0;
+    let allSame = true;
+    for (let i = 1; i < v.length - 1; i++) {
+      const ax = v[i].x - v[i - 1].x, ay = v[i].y - v[i - 1].y;
+      const bx = v[i + 1].x - v[i].x, by = v[i + 1].y - v[i].y;
+      const s = Math.sign(ax * by - ay * bx);
+      if (sign === 0) sign = s;
+      else if (s !== sign) { allSame = false; break; }
+    }
+    if (allSame) return null;
   }
+
+  // Curve guard: each retained segment's original sub-stroke must be roughly
+  // straight. A smooth curve that RDP chopped into pieces would bow within each
+  // piece and is rejected here (stays ink).
+  for (let k = 1; k < idx.length; k++) {
+    const seg = pts.slice(idx[k - 1], idx[k] + 1);
+    const segLen = dist(pts[idx[k - 1]], pts[idx[k]]);
+    if (maxDeviationFromChord(seg, pts[idx[k - 1]], pts[idx[k]]) > 0.14 * segLen + 4) return null;
+  }
+
   return { type: 'polyline', points: snapPolyline(v) };
 }
 

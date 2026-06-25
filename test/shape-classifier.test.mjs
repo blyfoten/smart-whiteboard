@@ -167,6 +167,40 @@ check('staircase → polyline (multiple segments)', () => {
   assert.ok(d.points.length >= 4);
 });
 
+check('3-step staircase (alternating) → polyline', () => {
+  const corners = [
+    { x: 60, y: 60 }, { x: 160, y: 60 }, { x: 160, y: 160 }, { x: 260, y: 160 },
+    { x: 260, y: 260 }, { x: 360, y: 260 },
+  ];
+  const pts = [];
+  for (let i = 0; i < corners.length - 1; i++) pts.push(...line(corners[i], corners[i + 1], 20));
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+});
+
+check('U-shape → polyline (4 vertices)', () => {
+  const pts = [
+    ...line({ x: 80, y: 60 }, { x: 80, y: 260 }, 25),
+    ...line({ x: 80, y: 260 }, { x: 280, y: 260 }, 25),
+    ...line({ x: 280, y: 260 }, { x: 280, y: 60 }, 25),
+  ];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+  assert.equal(d.points.length, 4);
+});
+
+check('L with a bowed segment → still polyline', () => {
+  // Vertical leg, then a horizontal leg that bows (hand-drawn) — the bow must
+  // not get rejected; it should merge out, leaving the one real corner.
+  const horiz = Array.from({ length: 41 }, (_, i) => {
+    const t = i / 40;
+    return { x: jitter(80 + 220 * t), y: jitter(260 + Math.sin(t * Math.PI) * 14) };
+  });
+  const pts = [...line({ x: 80, y: 60 }, { x: 80, y: 260 }, 25), ...horiz];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+});
+
 check('straight line stays line (not polyline)', () => {
   const d = classifyStroke(line({ x: 40, y: 100 }, { x: 360, y: 108 }));
   assert.equal(d?.type, 'line');
