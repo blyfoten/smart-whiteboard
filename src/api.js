@@ -265,11 +265,12 @@ export async function extractEquation() {
       }
       appendOutput(outputHtml);
 
-      // The handwriting we extracted from = everything except graphs and any
-      // earlier extracted equation. We replace it in place with clean text.
+      // The handwriting we extracted = plain freehand ink only (Fabric Paths),
+      // NOT smart shapes, graphs, or earlier extracted text — so the font size
+      // and in-place replacement track the equation, not the whole drawing.
       const inkObjects = canvas
         .getObjects()
-        .filter((o) => !o._isGraph && !o._isExtracted);
+        .filter((o) => o.type === 'path' && !o._isShape && !o._isGhost);
       const inkBox = boundingBoxOf(inkObjects) || boundingBox;
       const boxWidth = inkBox.maxX - inkBox.minX;
       const boxHeight = inkBox.maxY - inkBox.minY;
