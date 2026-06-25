@@ -2,8 +2,9 @@
 
 import { getCanvas, undoLast, saveScreenshot, clearCanvas } from './canvas.js';
 import { IText } from 'fabric';
-import { solveEquationFromText, extractEquation, drawGraph } from './api.js';
+import { solveEquationFromText, extractEquation, analyzeRegionInk, drawGraph } from './api.js';
 import { redrawLastGraph } from './graph.js';
+import { startRegionSelect, inkInRegion } from './region-select.js';
 import { toggleRecognition } from './speech.js';
 
 let currentModel = 'math';
@@ -124,6 +125,23 @@ export function initializeEventListeners() {
   const extractEqBtn = document.getElementById('extract-eq-btn');
   if (extractEqBtn) {
     extractEqBtn.addEventListener('click', extractEquation);
+  }
+
+  const regionAnalyzeBtn = document.getElementById('region-analyze-btn');
+  if (regionAnalyzeBtn) {
+    regionAnalyzeBtn.addEventListener('click', () => {
+      regionAnalyzeBtn.classList.add('active');
+      startRegionSelect((region) => {
+        regionAnalyzeBtn.classList.remove('active');
+        if (!region) return;
+        const ink = inkInRegion(getCanvas(), region);
+        if (!ink.length) {
+          alert('No handwriting found in the selected region.');
+          return;
+        }
+        analyzeRegionInk(ink);
+      });
+    });
   }
 
   const undoBtn = document.getElementById('undo-btn');

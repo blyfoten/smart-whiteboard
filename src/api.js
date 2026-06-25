@@ -1,6 +1,6 @@
 // src/api.js — fetch calls to backend (solve, extract, graph)
 
-import { getCanvas, getCanvasBoundingBox, cropCanvasToBoundingBox } from './canvas.js';
+import { getCanvas, cropObjects } from './canvas.js';
 import { IText, Textbox } from 'fabric';
 import { getCurrentModel } from './ui.js';
 import { renderGraph } from './graph.js';
@@ -233,18 +233,37 @@ export async function extractEquation() {
 
   hideEquationMenu();
 
-  const boundingBox = getCanvasBoundingBox(canvas);
-  const croppedDataURL = await cropCanvasToBoundingBox(canvas);
-
-  if (!croppedDataURL || !boundingBox) {
-    alert('No objects found on the canvas to extract equation from.');
+  // Plain freehand ink only (Fabric Paths), NOT smart shapes/graphs/extracted
+  // text — so we read & replace the equation, not the whole drawing.
+  const inkObjects = canvas
+    .getObjects()
+    .filter((o) => o.type === 'path' && !o._isShape && !o._isGhost);
+  if (!inkObjects.length) {
+    alert('No handwriting found to analyze.');
     return;
   }
+  return runExtraction(canvas, inkObjects, model);
+}
 
+// Analyze just the ink within a user-selected region (lasso/marquee), ignoring
+// the rest of a cluttered board.
+export async function analyzeRegionInk(inkObjects) {
+  const canvas = getCanvas();
+  if (!canvas || !inkObjects || !inkObjects.length) return null;
+  hideEquationMenu();
+  return runExtraction(canvas, inkObjects, getCurrentModel());
+}
+
+// Crop the given ink, send it to the vision model, then render the recognized
+// equation as clean text in the ink's place (one undo step) and open the menu.
+async function runExtraction(canvas, inkObjects, model) {
+  const croppedDataURL = await cropObjects(canvas, inkObjects);
+  if (!croppedDataURL) {
+    alert('Nothing to analyze.');
+    return null;
+  }
   try {
-    appendOutput(`<b>Extracting equation from canvas</b><br><i>Using model: ${model}</i><br><i>Processing...</i>`);
-
-    // Unified endpoint; map the UI model to a vision provider (math/gpt → openai).
+    appendOutput(`<b>Analyzing handwriting</b><br><i>Using model: ${model}</i><br><i>Processing...</i>`);
     const provider = { gemini: 'gemini', claude: 'claude' }[model] || 'openai';
 
     const response = await fetch('/extract', {
@@ -253,75 +272,62 @@ export async function extractEquation() {
       body: JSON.stringify({ image: croppedDataURL, provider }),
     });
     const data = await response.json();
-
-    if (data.success) {
-      const { equation, dependentVariable, scope, ranges } = data;
-
-      let outputHtml = `<b>Extracted Equation:</b> ${dependentVariable} = ${equation}<br>`;
-      outputHtml += `<b>Variables:</b> ${Object.keys(scope).join(', ')}<br>`;
-      outputHtml += '<b>Ranges:</b><br>';
-      for (const [variable, range] of Object.entries(ranges)) {
-        outputHtml += `${variable}: [${range[0]}, ${range[1]}]<br>`;
-      }
-      appendOutput(outputHtml);
-
-      // The handwriting we extracted = plain freehand ink only (Fabric Paths),
-      // NOT smart shapes, graphs, or earlier extracted text — so the font size
-      // and in-place replacement track the equation, not the whole drawing.
-      const inkObjects = canvas
-        .getObjects()
-        .filter((o) => o.type === 'path' && !o._isShape && !o._isGhost);
-      const inkBox = boundingBoxOf(inkObjects) || boundingBox;
-      const boxWidth = inkBox.maxX - inkBox.minX;
-      const boxHeight = inkBox.maxY - inkBox.minY;
-
-      // Start from the box height, then shrink so the plain-text equation (which
-      // is wider than handwriting — x^2 etc.) fits the original box width.
-      const { text: displayText, ranges: supRanges } = parseSuperscripts(
-        `${dependentVariable} = ${formatEquationForDisplay(equation)}`
-      );
-      let fontSize = Math.max(12, Math.round(boxHeight * 0.9));
-      const eqText = new IText(displayText, {
-        left: inkBox.minX,
-        top: inkBox.minY,
-        fill: 'green',
-        fontSize,
-        fontFamily: 'Caveat, cursive',
-        selectable: true,
-        evented: true,
-      });
-      applySuperscript(eqText, supRanges, fontSize);
-      if (eqText.width > boxWidth && eqText.width > 0) {
-        fontSize = Math.max(12, Math.floor(fontSize * (boxWidth / eqText.width)));
-        eqText.set({ fontSize });
-        applySuperscript(eqText, supRanges, fontSize);
-      }
-      // Vertically center the (now shorter) text within the original box.
-      eqText.set({ top: inkBox.minY + Math.max(0, (boxHeight - eqText.height) / 2) });
-      eqText._isExtracted = true;
-
-      // Replace the handwriting in place as ONE undo step that restores the ink.
-      historySuspend(() => {
-        inkObjects.forEach((o) => canvas.remove(o));
-        canvas.add(eqText);
-      });
-      pushComposite((c) => historySuspend(() => {
-        c.remove(eqText);
-        inkObjects.forEach((o) => c.add(o));
-      }));
-
-      window.extractedEquationData = { equation, dependentVariable, scope, ranges };
-
-      // Leave the result selected and pop a content-aware action menu next to it
-      // (Plot / Solve / Steps), Word-style — instead of auto-plotting.
-      canvas.setActiveObject(eqText);
-      canvas.requestRenderAll();
-      showEquationMenu(eqText, window.extractedEquationData);
-      return window.extractedEquationData;
-    } else {
+    if (!data.success) {
       appendOutput(`<b>Error extracting equation:</b><br>${data.message || 'Unknown error'}`, true);
       return null;
     }
+
+    const { equation, dependentVariable, scope, ranges } = data;
+    let outputHtml = `<b>Extracted Equation:</b> ${dependentVariable} = ${equation}<br>`;
+    outputHtml += `<b>Variables:</b> ${Object.keys(scope).join(', ')}<br>`;
+    outputHtml += '<b>Ranges:</b><br>';
+    for (const [variable, range] of Object.entries(ranges)) {
+      outputHtml += `${variable}: [${range[0]}, ${range[1]}]<br>`;
+    }
+    appendOutput(outputHtml);
+
+    const inkBox = boundingBoxOf(inkObjects);
+    const boxWidth = inkBox.maxX - inkBox.minX;
+    const boxHeight = inkBox.maxY - inkBox.minY;
+
+    // Size from the box height, then shrink so the plain-text equation fits width.
+    const { text: displayText, ranges: supRanges } = parseSuperscripts(
+      `${dependentVariable} = ${formatEquationForDisplay(equation)}`
+    );
+    let fontSize = Math.max(12, Math.round(boxHeight * 0.9));
+    const eqText = new IText(displayText, {
+      left: inkBox.minX,
+      top: inkBox.minY,
+      fill: 'green',
+      fontSize,
+      fontFamily: 'Caveat, cursive',
+      selectable: true,
+      evented: true,
+    });
+    applySuperscript(eqText, supRanges, fontSize);
+    if (eqText.width > boxWidth && eqText.width > 0) {
+      fontSize = Math.max(12, Math.floor(fontSize * (boxWidth / eqText.width)));
+      eqText.set({ fontSize });
+      applySuperscript(eqText, supRanges, fontSize);
+    }
+    eqText.set({ top: inkBox.minY + Math.max(0, (boxHeight - eqText.height) / 2) });
+    eqText._isExtracted = true;
+
+    // Replace the handwriting in place as ONE undo step that restores the ink.
+    historySuspend(() => {
+      inkObjects.forEach((o) => canvas.remove(o));
+      canvas.add(eqText);
+    });
+    pushComposite((c) => historySuspend(() => {
+      c.remove(eqText);
+      inkObjects.forEach((o) => c.add(o));
+    }));
+
+    window.extractedEquationData = { equation, dependentVariable, scope, ranges };
+    canvas.setActiveObject(eqText);
+    canvas.requestRenderAll();
+    showEquationMenu(eqText, window.extractedEquationData);
+    return window.extractedEquationData;
   } catch (error) {
     console.error('Error:', error);
     appendOutput(`<b>Error:</b><br>${error.message || 'Unknown error during extraction'}`, true);

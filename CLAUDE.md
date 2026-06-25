@@ -51,7 +51,8 @@ Providers live behind a small interface in **`providers/`**: `openai.js`, `gemin
 ### Key cross-cutting patterns
 
 - **All UI behavior lives in the bundle.** `public/index.html` has **no inline script** (de-duplicated in §4.2) — every handler is wired in `src/` on `DOMContentLoaded`. A few `window` globals remain as a light bridge/state holder: `window.canvas`, `window.solveEquation`, `window.extractedEquationData` (last extracted equation), and `window.appendToOutput` (back-compat alias; `api.js` imports `appendToOutput` from `output.js` directly).
-- **End-to-end analyze flow:** draw → `cropCanvasToBoundingBox` (JPEG data URL) → `POST /extract` (`{ image, provider }`) → store JSON on `window.extractedEquationData` → replace the handwriting with clean text in place → open the contextual menu. Plotting is no longer automatic: the menu's **Plot** action (or the 📈 toolbar button) calls `drawGraph()` → `/graph` → `renderGraph` draws via Chart.js offscreen and adds a Fabric image (`_isGraph`).
+- **End-to-end analyze flow:** draw → collect plain ink Paths (or the ink inside a drag-selected region via the ⛶ "Analyze region" button, `region-select.js`) → `cropObjects` (JPEG of just that ink) → `POST /extract` (`{ image, provider }`) → store JSON on `window.extractedEquationData` → replace the ink with clean text in place → open the contextual menu. Plotting is not automatic: the menu's **Plot** action (or the 📈 toolbar button) calls `drawGraph()` → `/graph` → `renderGraph` draws via Chart.js offscreen and adds a Fabric image (`_isGraph`).
+- **Undo** is a command stack (`history.js`): adds/removals/modifications recorded via canvas events; multi-step ops (smart-shape snap, extract-in-place, clear) push one composite by suspending recording. Snapping a shape no longer leaves a ghost — undo restores the original stroke.
 
 ## Notes / known rough edges
 

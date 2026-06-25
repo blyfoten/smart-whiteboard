@@ -202,6 +202,33 @@ export async function cropCanvasToBoundingBox(canvas) {
   return tempCanvas.toDataURL({ format: 'jpeg', quality: 0.8 });
 }
 
+// Crop only the given objects to a white-backed JPEG data URL (so unrelated
+// clutter elsewhere on the board is excluded). Used by region/ink-scoped analyze.
+export async function cropObjects(canvas, objects) {
+  if (!objects || objects.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  objects.forEach((o) => {
+    const r = o.getBoundingRect(true, false);
+    minX = Math.min(minX, r.left);
+    minY = Math.min(minY, r.top);
+    maxX = Math.max(maxX, r.left + r.width);
+    maxY = Math.max(maxY, r.top + r.height);
+  });
+  const pad = 12;
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+
+  const tempCanvas = new StaticCanvas(null, { backgroundColor: 'white', width, height });
+  const clones = await Promise.all(objects.map((o) => o.clone()));
+  clones.forEach((o) => {
+    o.set({ left: o.left - minX, top: o.top - minY, selectable: false, evented: false });
+    tempCanvas.add(o);
+  });
+  tempCanvas.renderAll();
+  return tempCanvas.toDataURL({ format: 'jpeg', quality: 0.8 });
+}
+
 export function saveScreenshot(canvas) {
   if (!canvas) return;
   // Temporarily deselect so selection borders don't appear in screenshot
