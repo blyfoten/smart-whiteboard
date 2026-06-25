@@ -6,6 +6,7 @@ import { initializeModelSelectionUI, setupCanvasEventListeners, initializeEventL
 import { initModes } from './modes.js';
 import { initOutputPanel } from './output.js';
 import { initVoice } from './voice.js';
+import { initHistory } from './history.js';
 import { solveEquation } from './api.js';
 
 function handleCommand(command) {
@@ -29,6 +30,8 @@ document.addEventListener('DOMContentLoaded', () => {
       resizeCanvas(canvas);
       window.addEventListener('resize', () => resizeCanvas(canvas));
       addReadyIndicator(canvas);
+      // Start recording undo history after the ready indicator so it isn't undoable.
+      initHistory(canvas);
       setupCanvasEventListeners();
       initModes(canvas);
 

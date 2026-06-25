@@ -6,6 +6,7 @@ import { getCurrentModel } from './ui.js';
 import { renderGraph } from './graph.js';
 import { appendToOutput } from './output.js';
 import { showEquationMenu, hideEquationMenu } from './equation-menu.js';
+import { suspend as historySuspend, pushComposite } from './history.js';
 
 function appendOutput(html, isError) {
   appendToOutput(html, isError);
@@ -298,10 +299,15 @@ export async function extractEquation() {
       eqText.set({ top: inkBox.minY + Math.max(0, (boxHeight - eqText.height) / 2) });
       eqText._isExtracted = true;
 
-      // Replace the handwriting in place, stashing it for a one-press Undo.
-      eqText._replacedInk = inkObjects;
-      inkObjects.forEach((o) => canvas.remove(o));
-      canvas.add(eqText);
+      // Replace the handwriting in place as ONE undo step that restores the ink.
+      historySuspend(() => {
+        inkObjects.forEach((o) => canvas.remove(o));
+        canvas.add(eqText);
+      });
+      pushComposite((c) => historySuspend(() => {
+        c.remove(eqText);
+        inkObjects.forEach((o) => c.add(o));
+      }));
 
       window.extractedEquationData = { equation, dependentVariable, scope, ranges };
 

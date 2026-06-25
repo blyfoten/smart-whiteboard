@@ -1,6 +1,7 @@
 // src/canvas.js — canvas init, resize, bounding box, crop, pinch-zoom, undo
 
 import { Canvas, PencilBrush, StaticCanvas, Text, Point } from 'fabric';
+import { undo as historyUndo, suspend as historySuspend, pushComposite } from './history.js';
 
 let canvasInstance = null;
 let _isPinching = false;
@@ -135,17 +136,7 @@ export function getCanvas() {
 }
 
 export function undoLast(canvas) {
-  if (!canvas) return;
-  const objects = canvas.getObjects();
-  if (objects.length === 0) return;
-  const last = objects[objects.length - 1];
-  canvas.remove(last);
-  // If this object replaced some handwriting in place (extract-in-place), bring
-  // the original strokes back so a single Undo fully reverses the replacement.
-  if (Array.isArray(last._replacedInk)) {
-    last._replacedInk.forEach((o) => canvas.add(o));
-  }
-  canvas.requestRenderAll();
+  historyUndo(canvas);
 }
 
 export function resizeCanvas(canvas) {
@@ -253,10 +244,21 @@ export function saveScreenshot(canvas) {
 
 export function clearCanvas(canvas) {
   if (!canvas) return;
-  canvas.clear();
-  canvas.backgroundColor = 'white';
+  // Record the clear as one undoable step that restores everything.
+  const removed = canvas.getObjects().slice();
+  const prevEq = window.extractedEquationData;
+  historySuspend(() => {
+    canvas.clear();
+    canvas.backgroundColor = 'white';
+  });
   canvas.requestRenderAll();
   window.extractedEquationData = null;
+  if (removed.length) {
+    pushComposite((c) => {
+      removed.forEach((o) => c.add(o));
+      window.extractedEquationData = prevEq;
+    });
+  }
 }
 
 export function addReadyIndicator(canvas) {

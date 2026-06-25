@@ -10,13 +10,13 @@
 import { pathToPoints, recognizeStroke } from './shapes.js';
 import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
 import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
+import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
 let _edgeSnap = 'on';               // 'on' | 'off' — endpoint edge-snap + sticky anchors
 let _canvas = null;
 
-const GHOST_OPACITY = 0.3;          // faded original stroke kept under the snapped shape
 const EDGE_SNAP_PX = 22;            // screen-pixel radius for endpoint edge-snapping
 
 export function getEdgeSnap() {
@@ -151,16 +151,6 @@ function _onPathCreated(e) {
   });
   if (!result) return;
 
-  // Keep the original freehand stroke as a faded "ghost" beneath the clean
-  // shape, so the difference between what was drawn and what was generated stays
-  // visible. (Tagged _isGhost; non-selectable so it doesn't block the shape.)
-  path.set({
-    selectable: false,
-    evented: false,
-    opacity: GHOST_OPACITY,
-    _isGhost: true,
-  });
-
   const { shape } = result;
   shape.set({ selectable: true, evented: true, opacity: 0.5, _isShape: true });
 
@@ -170,7 +160,19 @@ function _onPathCreated(e) {
     _snapEndpointsToEdges(shape);
   }
 
-  _canvas.add(shape);
+  // Replace the freehand stroke with the clean shape as ONE undo step: drop the
+  // path's own add-entry, remove the original stroke (kept in `path`), add the
+  // shape, and record a composite whose undo restores the original stroke.
+  historyPopLast();
+  historySuspend(() => {
+    _canvas.remove(path);
+    _canvas.add(shape);
+  });
+  pushComposite((c) => historySuspend(() => {
+    c.remove(shape);
+    c.add(path); // original hand-drawn stroke reappears, in its original colour
+  }));
+
   // Brief fade-in as a "snap" cue. Guarded so any animate API mismatch still
   // leaves the shape fully opaque rather than half-faded.
   try {
@@ -223,6 +225,8 @@ export function initModes(canvas) {
   }
 
   canvas.on('path:created', _onPathCreated);
+  // After an undo, re-pin anchored nodes (e.g. a restored/relocated target).
+  onAfterUndo(() => _reapplyAnchors(null));
   // Sticky anchors: anchored polyline nodes follow their shape as it moves.
   canvas.on('object:moving', (e) => _reapplyAnchors(e.target));
   canvas.on('object:modified', (e) => {
