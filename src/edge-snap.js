@@ -5,7 +5,20 @@
 // that edge so connections are clean. Works in scene coordinates and accounts for
 // each target's transform (move/scale/rotate), so it keeps working after edits.
 
-import { Point } from 'fabric';
+import { Point, util } from 'fabric';
+
+// A scene point expressed in a target's local coordinate space, and back. Used to
+// pin an anchored vertex to a fixed spot on a shape so it follows the shape's
+// moves/scales/rotations.
+export function toTargetLocal(target, scenePoint) {
+  const p = new Point(scenePoint.x, scenePoint.y).transform(util.invertTransform(target.calcTransformMatrix()));
+  return { x: p.x, y: p.y };
+}
+
+export function fromTargetLocal(target, localPoint) {
+  const p = new Point(localPoint.x, localPoint.y).transform(target.calcTransformMatrix());
+  return { x: p.x, y: p.y };
+}
 
 // The vertices of a Polyline/Polygon in scene coordinates.
 function polyVertsScene(obj) {

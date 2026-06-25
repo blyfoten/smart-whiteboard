@@ -57,6 +57,18 @@ function anchorWrapper(anchorIndex, fn) {
   };
 }
 
+// Move vertex `index` of a polyline/polygon to a scene-space point, keeping the
+// other vertices fixed — same math as dragging its control. Used by sticky edge
+// anchors to follow a shape as it moves.
+export function applyVertexSceneMove(poly, index, scenePoint) {
+  if (!poly || !Array.isArray(poly.points)) return;
+  const n = poly.points.length;
+  if (index < 0 || index >= n) return;
+  const anchor = index > 0 ? index - 1 : n - 1;
+  anchorWrapper(anchor, makeActionHandler(index))(null, { target: poly }, scenePoint.x, scenePoint.y);
+  poly.setCoords();
+}
+
 function renderHandle(ctx, left, top) {
   ctx.save();
   ctx.beginPath();

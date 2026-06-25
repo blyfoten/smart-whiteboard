@@ -8,14 +8,24 @@
 // Hold Space to temporarily drop into Select without leaving the current mode.
 
 import { pathToPoints, recognizeStroke } from './shapes.js';
-import { snapPointToShapes } from './edge-snap.js';
+import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
+import { applyVertexSceneMove } from './node-edit.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
+let _edgeSnap = 'on';               // 'on' | 'off' — endpoint edge-snap + sticky anchors
 let _canvas = null;
 
 const GHOST_OPACITY = 0.3;          // faded original stroke kept under the snapped shape
 const EDGE_SNAP_PX = 22;            // screen-pixel radius for endpoint edge-snapping
+
+export function getEdgeSnap() {
+  return _edgeSnap;
+}
+
+export function setEdgeSnap(value) {
+  if (['on', 'off'].includes(value)) _edgeSnap = value;
+}
 
 export function getMode() {
   return _mode;
@@ -68,6 +78,7 @@ function _shouldBeautify() {
 // are still in scene coordinates (no transform applied), so we can read/write
 // them directly. Records the snapped target on the shape for later anchoring.
 function _snapEndpointsToEdges(shape) {
+  if (_edgeSnap !== 'on') return;
   const pts = shape.points;
   if (!pts || pts.length < 2) return;
   const targets = _canvas.getObjects().filter((o) => o._isShape && !o._isGhost && o !== shape);
@@ -80,15 +91,36 @@ function _snapEndpointsToEdges(shape) {
     const hit = snapPointToShapes(pts[i], targets, maxDist);
     if (hit) {
       pts[i] = hit.point;
-      anchors[i] = hit.target;
+      // Pin the vertex to a fixed spot in the target's local frame so it follows
+      // the target when it moves/scales (sticky anchoring).
+      anchors[i] = { target: hit.target, local: toTargetLocal(hit.target, hit.point) };
       changed = true;
     }
   });
   if (changed) {
-    shape._edgeAnchors = anchors; // groundwork for sticky anchoring (feature 2)
+    shape._edgeAnchors = anchors;
     shape.setBoundingBox(true);
     shape.setCoords();
   }
+}
+
+// Re-pin every anchored polyline vertex onto its target's current edge position,
+// so anchored nodes follow a shape as it's moved/scaled. `skip` is the object
+// currently being dragged (don't fight its own drag).
+function _reapplyAnchors(skip) {
+  if (_edgeSnap !== 'on') return;
+  const objs = _canvas.getObjects();
+  let any = false;
+  for (const poly of objs) {
+    if (poly === skip || !poly._edgeAnchors) continue;
+    for (const key of Object.keys(poly._edgeAnchors)) {
+      const a = poly._edgeAnchors[key];
+      if (!a || !a.target || !objs.includes(a.target)) continue;
+      applyVertexSceneMove(poly, Number(key), fromTargetLocal(a.target, a.local));
+      any = true;
+    }
+  }
+  if (any) _canvas.requestRenderAll();
 }
 
 // Swap a freehand path for a recognized primitive, with a brief fade-in.
@@ -167,7 +199,16 @@ export function initModes(canvas) {
     smartSelect.addEventListener('change', (ev) => setSmartShapes(ev.target.value));
   }
 
+  const edgeSnapSelect = document.getElementById('edge-snap-select');
+  if (edgeSnapSelect) {
+    _edgeSnap = edgeSnapSelect.value || _edgeSnap;
+    edgeSnapSelect.addEventListener('change', (ev) => setEdgeSnap(ev.target.value));
+  }
+
   canvas.on('path:created', _onPathCreated);
+  // Sticky anchors: anchored polyline nodes follow their shape as it moves.
+  canvas.on('object:moving', (e) => _reapplyAnchors(e.target));
+  canvas.on('object:modified', () => _reapplyAnchors(null));
 
   // Hold Space → temporary Select; release → restore previous mode.
   let tempPrevMode = null;
