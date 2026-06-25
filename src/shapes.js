@@ -3,10 +3,25 @@
 // Pure geometry/classification lives in shape-classifier.js (no Fabric, unit
 // tested). This module owns only the Fabric object construction.
 
-import { Line, Rect, Ellipse, Path } from 'fabric';
+import { Rect, Ellipse, Path, Polyline } from 'fabric';
 import { classifyStroke, pathToPoints } from './shape-classifier.js';
+import { enablePointEditing } from './node-edit.js';
 
 export { pathToPoints };
+
+// A straight or multi-segment stroke becomes a Polyline with draggable vertices.
+function buildPolyline(points, opts) {
+  const poly = new Polyline(points, {
+    stroke: opts.color,
+    strokeWidth: opts.strokeWidth,
+    fill: '',
+    strokeLineJoin: 'round',
+    strokeLineCap: 'round',
+    objectCaching: false,
+  });
+  enablePointEditing(poly);
+  return poly;
+}
 
 function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -38,8 +53,10 @@ export function recognizeStroke(pts, opts = {}) {
     case 'line':
       return {
         type: 'line',
-        shape: new Line([desc.a.x, desc.a.y, desc.b.x, desc.b.y], { stroke: color, strokeWidth }),
+        shape: buildPolyline([{ x: desc.a.x, y: desc.a.y }, { x: desc.b.x, y: desc.b.y }], { color, strokeWidth }),
       };
+    case 'polyline':
+      return { type: 'polyline', shape: buildPolyline(desc.points, { color, strokeWidth }) };
     case 'arrow':
       return { type: 'arrow', shape: buildArrowPath(desc.a, desc.b, { color, strokeWidth }) };
     case 'circle':

@@ -168,6 +168,50 @@ function countCorners(pts) {
   return count;
 }
 
+// Ramer–Douglas–Peucker: simplify a polyline to the fewest vertices that keep
+// every original point within `eps` of the simplified path. Used to straighten a
+// multi-segment freehand stroke into connected straight segments.
+function rdp(points, eps) {
+  if (points.length < 3) return points.slice();
+  let maxD = 0;
+  let idx = 0;
+  const a = points[0];
+  const b = points[points.length - 1];
+  for (let i = 1; i < points.length - 1; i++) {
+    const d = pointLineDistance(points[i], a, b);
+    if (d > maxD) { maxD = d; idx = i; }
+  }
+  if (maxD > eps) {
+    const left = rdp(points.slice(0, idx + 1), eps);
+    const right = rdp(points.slice(idx), eps);
+    return left.slice(0, -1).concat(right);
+  }
+  return [a, b];
+}
+
+// An open multi-segment stroke (an L, a staircase, a zig-zag of a few segments)
+// → its corner vertices, or null. Conservative: rejects curves, scribbles and
+// handwriting, which simplify to too many or too-soft vertices.
+function detectPolyline(pts, bb) {
+  const diag = Math.hypot(bb.w, bb.h);
+  const eps = Math.max(6, 0.035 * diag);
+  const v = rdp(pts, eps);
+  if (v.length < 3 || v.length > 7) return null; // 2 = straight line; >7 = not clean
+
+  const minSeg = Math.max(MIN_SIZE * 0.7, 0.09 * diag);
+  for (let i = 1; i < v.length; i++) {
+    if (dist(v[i - 1], v[i]) < minSeg) return null; // reject tiny zig-zag noise
+  }
+  // Every interior vertex must be a real corner (a sharp turn) — otherwise the
+  // stroke is a smooth curve that RDP merely chopped into segments.
+  const TURN = (30 * Math.PI) / 180;
+  for (let i = 1; i < v.length - 1; i++) {
+    const t = angleTurn(v[i].x - v[i - 1].x, v[i].y - v[i - 1].y, v[i + 1].x - v[i].x, v[i + 1].y - v[i].y);
+    if (t < TURN) return null;
+  }
+  return { type: 'polyline', points: v.map((p) => ({ x: p.x, y: p.y })) };
+}
+
 // Arrow: a mostly-straight shaft from start to the farthest point, followed by
 // a short hook (the arrowhead) that folds back toward the start.
 function detectArrow(pts) {
@@ -200,10 +244,11 @@ function detectArrow(pts) {
 }
 
 // classifyStroke(points) -> descriptor | null
-//   { type: 'line',    a, b }
-//   { type: 'arrow',   a, b }
+//   { type: 'line',     a, b }
+//   { type: 'polyline', points: [{x,y}, ...] }
+//   { type: 'arrow',    a, b }
 //   { type: 'circle' | 'ellipse', cx, cy, rx, ry }
-//   { type: 'rect',    x, y, w, h }
+//   { type: 'rect',     x, y, w, h }
 export function classifyStroke(pts) {
   if (!pts || pts.length < 3) return null;
 
@@ -220,6 +265,9 @@ export function classifyStroke(pts) {
     const arrow = detectArrow(pts);
     if (arrow) return { type: 'arrow', a: arrow.a, b: arrow.b };
     if (isStraight(pts)) return { type: 'line', a: { ...a }, b: { ...b } };
+    // Multi-segment straightening: an L / staircase / few-segment zig-zag.
+    const poly = detectPolyline(pts, bb);
+    if (poly) return poly;
     return null;
   }
 

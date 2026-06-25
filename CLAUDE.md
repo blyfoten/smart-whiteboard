@@ -41,7 +41,8 @@ Providers live behind a small interface in **`providers/`**: `openai.js`, `gemin
 - `ui.js` — **all** button/dropdown event wiring (`initializeEventListeners`), the `currentModel` state (`getCurrentModel()`), the ⚙ Settings popover (`initSettingsMenu`), and the double-click-to-add-IText behavior. (Solving is contextual now — no standalone Solve button.)
 - `output.js` — the "Solution Output" panel: `appendToOutput()` result cards, clear, mobile collapse (`initOutputPanel`).
 - `modes.js` — interaction modes (draw/select/shapes), the toolbar + Space-to-select, and the shape-beautify hook.
-- `shape-classifier.js` (pure geometry, unit-tested) + `shapes.js` (Fabric builders) — freehand stroke → clean primitive recognition.
+- `shape-classifier.js` (pure geometry, unit-tested) + `shapes.js` (Fabric builders) — freehand stroke → clean primitive recognition (line, **polyline** via RDP straightening, arrow, rect, ellipse).
+- `node-edit.js` — `enablePointEditing(polyline)` gives a Fabric Polyline one draggable handle per vertex (custom controls) so lines/segments can be reshaped in Select mode; body-drag still moves it. Recognized lines/polylines are built as editable Polylines.
 - `graph.js` — renders Chart.js to an **offscreen** canvas, then inserts the result as a Fabric image object (tagged `_isGraph`) onto the whiteboard.
 - `speech.js` — Web Speech API voice commands (note: locale is hardcoded to `sv-SE`).
 

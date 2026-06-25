@@ -115,6 +115,38 @@ check('arrow → arrow', () => {
   assert.equal(d?.type, 'arrow');
 });
 
+check('L-shape → polyline (3 vertices)', () => {
+  const pts = [
+    ...line({ x: 80, y: 60 }, { x: 80, y: 260 }, 30),
+    ...line({ x: 80, y: 260 }, { x: 300, y: 260 }, 30),
+  ];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+  assert.equal(d.points.length, 3);
+});
+
+check('staircase → polyline (multiple segments)', () => {
+  const pts = [
+    ...line({ x: 60, y: 60 }, { x: 160, y: 60 }, 20),
+    ...line({ x: 160, y: 60 }, { x: 160, y: 160 }, 20),
+    ...line({ x: 160, y: 160 }, { x: 260, y: 160 }, 20),
+  ];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+  assert.ok(d.points.length >= 4);
+});
+
+check('straight line stays line (not polyline)', () => {
+  const d = classifyStroke(line({ x: 40, y: 100 }, { x: 360, y: 108 }));
+  assert.equal(d?.type, 'line');
+});
+
+check('smooth open arc → null (not polyline)', () => {
+  // A half-circle arc: gentle, continuous bend — must NOT straighten to segments.
+  const pts = ellipsePts(200, 200, 120, 120, 60).slice(0, 31);
+  assert.equal(classifyStroke(pts), null);
+});
+
 check('tiny stroke → null (stays ink)', () => {
   const d = classifyStroke(line({ x: 100, y: 100 }, { x: 110, y: 104 }));
   assert.equal(d, null);
