@@ -249,6 +249,21 @@ function detectPolyline(pts, bb) {
   return { type: 'polyline', points: snapPolyline(v) };
 }
 
+// Fraction of points that stray well into the interior, away from the bounding
+// box outline. A real rectangle hugs its bbox (≈0); a heart, triangle or
+// staircase dips inside, so a sizable fraction strays. Guards rect detection
+// against any closed blob that merely happens to have 3–6 sharp corners.
+function interiorStrayFraction(pts, bb) {
+  const half = Math.max(1, Math.min(bb.w, bb.h) / 2);
+  const thresh = 0.3 * half;
+  let stray = 0;
+  for (const p of pts) {
+    const edgeDist = Math.min(p.x - bb.minX, bb.maxX - p.x, p.y - bb.minY, bb.maxY - p.y);
+    if (edgeDist > thresh) stray++;
+  }
+  return stray / pts.length;
+}
+
 // Arrow: a mostly-straight shaft from start to the farthest point, followed by
 // a short hook (the arrowhead) that folds back toward the start.
 function detectArrow(pts) {
@@ -313,9 +328,11 @@ export function classifyStroke(pts) {
 
   // Corner count is the robust rect-vs-ellipse signal: a rectangle has ~4 sharp
   // corners, an ellipse none — far more tolerant of shaky sides than an
-  // edge-distance or area test, which a single noisy spike throws off.
+  // edge-distance or area test, which a single noisy spike throws off. But it
+  // also fires on hearts/triangles/staircases, so additionally require the
+  // stroke to hug its bounding box (few interior strays).
   const corners = countCorners(pts);
-  if (corners >= 3 && corners <= 6) {
+  if (corners >= 3 && corners <= 6 && interiorStrayFraction(pts, bb) < 0.12) {
     return { type: 'rect', x: bb.minX, y: bb.minY, w: bb.w, h: bb.h };
   }
 

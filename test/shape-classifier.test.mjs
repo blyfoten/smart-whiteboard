@@ -74,6 +74,27 @@ function wobblyRectPts(x, y, w, h, per = 22, bow = 9) {
   return pts;
 }
 
+// A closed heart outline (classic parametric heart), scaled & centered.
+function heartPts(cx, cy, scale, n = 80) {
+  return Array.from({ length: n + 1 }, (_, i) => {
+    const t = (i / n) * 2 * Math.PI;
+    const x = 16 * Math.sin(t) ** 3;
+    const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    return { x: jitter(cx + x * scale), y: jitter(cy - y * scale) };
+  });
+}
+
+// A closed triangle.
+function trianglePts(cx, cy, r, per = 24) {
+  const v = [0, 1, 2, 0].map((k) => ({
+    x: cx + r * Math.cos((k * 2 * Math.PI) / 3 - Math.PI / 2),
+    y: cy + r * Math.sin((k * 2 * Math.PI) / 3 - Math.PI / 2),
+  }));
+  const pts = [];
+  for (let i = 0; i < 3; i++) pts.push(...line(v[i], v[i + 1], per));
+  return pts;
+}
+
 // ---- tests ----
 check('horizontal line → line', () => {
   const d = classifyStroke(line({ x: 40, y: 100 }, { x: 360, y: 108 }));
@@ -108,6 +129,16 @@ check('wobbly-sided rectangle → rect (not oval)', () => {
 check('small square with shaky sides → rect', () => {
   const d = classifyStroke(wobblyRectPts(100, 100, 110, 95, 16, 7));
   assert.equal(d?.type, 'rect');
+});
+
+check('heart → not a rect (stays ink)', () => {
+  const d = classifyStroke(heartPts(200, 200, 9));
+  assert.notEqual(d?.type, 'rect');
+});
+
+check('triangle → not a rect', () => {
+  const d = classifyStroke(trianglePts(200, 200, 120));
+  assert.notEqual(d?.type, 'rect');
 });
 
 check('arrow → arrow', () => {
