@@ -9,7 +9,7 @@
 
 import { pathToPoints, recognizeStroke } from './shapes.js';
 import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
-import { applyVertexSceneMove } from './node-edit.js';
+import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
@@ -123,6 +123,23 @@ function _reapplyAnchors(skip) {
   if (any) _canvas.requestRenderAll();
 }
 
+// After a node was dragged: re-anchor it to the nearest shape edge if released
+// close enough, otherwise detach it (leave it where dropped).
+function _reanchorNodeAfterDrag(poly, i) {
+  const targets = _canvas.getObjects().filter((o) => o._isShape && !o._isGhost && o !== poly);
+  const scene = getVertexScenePosition(poly, i);
+  const maxDist = EDGE_SNAP_PX / (_canvas.getZoom() || 1);
+  const hit = targets.length ? snapPointToShapes({ x: scene.x, y: scene.y }, targets, maxDist) : null;
+  if (!poly._edgeAnchors) poly._edgeAnchors = {};
+  if (hit) {
+    poly._edgeAnchors[i] = { target: hit.target, local: toTargetLocal(hit.target, hit.point) };
+    applyVertexSceneMove(poly, i, hit.point); // snap exactly onto the edge
+  } else if (poly._edgeAnchors[i]) {
+    delete poly._edgeAnchors[i]; // dropped in open space → detach
+  }
+  _canvas.requestRenderAll();
+}
+
 // Swap a freehand path for a recognized primitive, with a brief fade-in.
 function _onPathCreated(e) {
   if (!_shouldBeautify()) return;
@@ -208,7 +225,20 @@ export function initModes(canvas) {
   canvas.on('path:created', _onPathCreated);
   // Sticky anchors: anchored polyline nodes follow their shape as it moves.
   canvas.on('object:moving', (e) => _reapplyAnchors(e.target));
-  canvas.on('object:modified', () => _reapplyAnchors(null));
+  canvas.on('object:modified', (e) => {
+    if (_edgeSnap !== 'on') return;
+    const obj = e && e.target;
+    const corner = e && e.transform && e.transform.corner;
+    const ctrl = corner && obj && obj.controls ? obj.controls[corner] : null;
+    // A node was dragged (our polylines only have point-controls, each with a
+    // pointIndex) → re-snap to nearest edge or detach. Otherwise a shape/body
+    // moved → keep anchored nodes glued to their targets.
+    if (obj && Array.isArray(obj.points) && ctrl && Number.isInteger(ctrl.pointIndex)) {
+      _reanchorNodeAfterDrag(obj, ctrl.pointIndex);
+    } else {
+      _reapplyAnchors(null);
+    }
+  });
 
   // Hold Space → temporary Select; release → restore previous mode.
   let tempPrevMode = null;
