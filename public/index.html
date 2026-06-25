@@ -4,7 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Smart Whiteboard</title>
+  <link rel="preload" href="/fonts/caveat-latin.woff2" as="font" type="font/woff2" crossorigin>
   <style>
+    /* Self-hosted handwriting font (latin variable, weights 400-700). Self-hosting
+       avoids the external lazy-load/network failures that left text on the
+       fallback font. */
+    @font-face {
+      font-family: 'Caveat';
+      font-style: normal;
+      font-weight: 400 700;
+      font-display: swap;
+      src: url('/fonts/caveat-latin.woff2') format('woff2');
+    }
     body, html {
       margin: 0;
       padding: 0;
@@ -64,6 +75,70 @@
     button:hover {
       background-color: #e0e0e0;
     }
+    /* Grouped icon toolbar: related actions sit together, separated by a divider. */
+    .btn-group { display: flex; align-items: center; gap: 4px; padding-right: 6px; border-right: 1px solid #ddd; margin-right: 2px; }
+    .icon-btn {
+      font-size: 17px;
+      line-height: 1;
+      padding: 6px 8px;
+      min-width: 36px;
+      text-align: center;
+    }
+    .mode-btn.active {
+      background-color: #4a90d9;
+      color: #fff;
+      border-color: #3a7bc8;
+    }
+    .mode-btn.active:hover { background-color: #3a7bc8; }
+    #voice-btn.active { background-color: #e53935; color: #fff; border-color: #c62828; }
+    #voice-btn.active:hover { background-color: #c62828; }
+    #smart-shapes-container { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+    /* Settings popover (⚙): app settings + a collapsed Developer section. */
+    #settings-wrap { position: relative; margin-left: auto; }
+    #settings-menu {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 6px;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 20;
+      min-width: 240px;
+    }
+    #settings-menu.hidden { display: none; }
+    .settings-section { display: flex; flex-direction: column; gap: 8px; }
+    .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+    .settings-row select { flex: 0 0 auto; }
+    .settings-divider { height: 1px; background: #e3e3e3; margin: 2px 0; }
+    .settings-heading { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #999; }
+    #settings-menu #force-solve-btn { background-color: #ffdddd; }
+    #settings-menu #test-section { display: flex; gap: 4px; }
+    /* Word-style floating action menu next to an analyzed equation. */
+    #equation-menu {
+      position: fixed;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 9px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.22);
+      padding: 5px;
+    }
+    #equation-menu .em-row { display: flex; align-items: center; gap: 4px; }
+    #equation-menu .em-methods { display: flex; flex-wrap: wrap; gap: 4px; padding-top: 4px; border-top: 1px solid #eee; }
+    #equation-menu .em-methods.hidden { display: none; }
+    #equation-menu .em-methods button { background: #eef4ff; border-color: #cdddfb; }
+    #equation-menu button { font-size: 13px; padding: 5px 9px; white-space: nowrap; }
+    #equation-menu .em-label { font-size: 11px; color: #999; padding: 0 4px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #equation-menu .em-close { color: #888; }
     #test-section {
       display: flex;
       align-items: center;
@@ -137,9 +212,6 @@
         bottom: 10px !important;
         right: 5vw !important;
       }
-      #debug-output {
-        display: none;
-      }
     }
     .result-block {
       margin-bottom: 10px;
@@ -166,28 +238,62 @@
     <canvas id="whiteboard"></canvas>
     <!-- graph is now rendered as fabric object on canvas -->
     <div class="ui-element">
-      <button id="start-record-btn">Start Voice Recognition</button>
-      <button id="extract-eq-btn">Extract Equation</button>
-      <button id="solve-eq-btn">Solve Equation</button>
-      <button id="graph-btn">Draw Graph</button>
-      <button id="undo-btn">Undo</button>
-      <button id="clear-btn">Clear Canvas</button>
-      <button id="save-btn">Save PNG</button>
+      <div id="mode-group" class="btn-group">
+        <button id="mode-draw" class="mode-btn icon-btn active" title="Draw (freehand)" aria-label="Draw">✏️</button>
+        <button id="mode-select" class="mode-btn icon-btn" title="Select &amp; move (or hold Space)" aria-label="Select">⬚</button>
+        <button id="mode-shapes" class="mode-btn icon-btn" title="Shapes (snap to clean shapes)" aria-label="Shapes">◇</button>
+      </div>
+      <div class="btn-group">
+        <button id="voice-btn" class="icon-btn" title="Voice mode (Gemini Live)" aria-label="Voice mode">🎤</button>
+        <button id="extract-eq-btn" class="icon-btn" title="Analyze drawing → text / math expression" aria-label="Analyze drawing">🔎</button>
+        <button id="graph-btn" class="icon-btn" title="Draw graph of last equation" aria-label="Draw graph">📈</button>
+      </div>
+      <div class="btn-group">
+        <button id="undo-btn" class="icon-btn" title="Undo" aria-label="Undo">↩️</button>
+        <button id="clear-btn" class="icon-btn" title="Clear canvas" aria-label="Clear canvas">🗑️</button>
+        <button id="save-btn" class="icon-btn" title="Save as PNG" aria-label="Save PNG">💾</button>
+      </div>
       <p id="status"></p>
-      <div id="model-select-container">
-        <label for="model-select">AI Model: </label>
-        <select id="model-select">
-          <option value="math">Math.js (Simple)</option>
-          <option value="gpt">GPT (Advanced)</option>
-          <option value="gemini">Gemini (Advanced)</option>
-        </select>
-      </div>
-      <div id="test-section">
-        <input type="text" id="test-equation" placeholder="e.g., x^2 + 3x - 5 = 0" />
-        <button id="add-test-equation-btn">Add Test Equation</button>
-      </div>
-      <div id="debug-output" style="margin-top: 10px; border-top: 1px solid #ccc; padding-top: 5px; font-size: 12px; color: #666;">
-        Debug: No events
+      <div id="settings-wrap">
+        <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings" aria-expanded="false">⚙️</button>
+        <div id="settings-menu" class="hidden">
+          <div class="settings-section">
+            <div class="settings-row">
+              <label for="model-select">AI model</label>
+              <select id="model-select">
+                <option value="math">Math.js (Simple)</option>
+                <option value="gpt">GPT (Advanced)</option>
+                <option value="gemini">Gemini (Advanced)</option>
+                <option value="claude">Claude (Advanced)</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <label for="smart-shapes-select">Smart shapes</label>
+              <select id="smart-shapes-select">
+                <option value="off">Off</option>
+                <option value="manual" selected>Manual (Shapes mode)</option>
+                <option value="auto">Auto</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <label for="graph-grid-select">Graph gridlines</label>
+              <select id="graph-grid-select">
+                <option value="off" selected>Off</option>
+                <option value="on">On</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-divider"></div>
+          <div class="settings-section">
+            <div class="settings-heading">Developer</div>
+            <button id="start-record-btn">🎙️ Start Voice Recognition</button>
+            <button id="force-solve-btn">Force Solve…</button>
+            <div id="test-section">
+              <input type="text" id="test-equation" placeholder="e.g., x^2 + 3x - 5 = 0" />
+              <button id="add-test-equation-btn">Add Test Equation</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     
@@ -203,119 +309,7 @@
     </div>
   </div>
   
+  <!-- All behavior is wired in the webpack bundle (src/). No inline script. -->
   <script src="dist/bundle.js"></script>
-  <script>
-    // Basic debugging
-    console.log('HTML inline script running');
-    const debugOutput = document.getElementById('debug-output');
-    
-    // Set up model selection
-    const modelSelect = document.getElementById('model-select');
-    modelSelect.addEventListener('change', function(e) {
-      debugOutput.textContent = 'Model changed: ' + e.target.value;
-      if (window.setCurrentModel) {
-        window.setCurrentModel(e.target.value);
-      } else {
-        window.currentModel = e.target.value;
-      }
-      console.log('Selected model:', e.target.value);
-    });
-    
-    // Direct event listener for solve button
-    document.getElementById('solve-eq-btn').addEventListener('click', function() {
-      debugOutput.textContent = 'Solve button clicked';
-      console.log('Solve button clicked directly from HTML');
-      
-      // Try to call the solveEquation function if it exists
-      if (window.solveEquation) {
-        window.solveEquation();
-      } else {
-        alert('solveEquation function not found!');
-      }
-    });
-    
-    // Direct event listener for clear button
-    document.getElementById('clear-btn').addEventListener('click', function() {
-      debugOutput.textContent = 'Clear button clicked';
-      console.log('Clear button clicked');
-      
-      if (window.canvas) {
-        window.canvas.clear();
-        window.canvas.backgroundColor = 'white';
-        window.canvas.requestRenderAll();
-        window.extractedEquationData = null;
-      } else {
-        alert('Canvas not found!');
-      }
-    });
-    
-    // Add test equation
-    document.getElementById('add-test-equation-btn').addEventListener('click', function() {
-      const equationInput = document.getElementById('test-equation');
-      const equation = equationInput.value.trim();
-      
-      if (!equation) {
-        alert('Please enter a test equation');
-        return;
-      }
-      
-      debugOutput.textContent = `Adding test equation: ${equation}`;
-      
-      if (window.canvas) {
-        const canvasToUse = window.canvas;
-        // Add the equation text to the canvas
-        const text = new fabric.IText(equation, {
-          left: 100,
-          top: 100,
-          fill: 'black',
-          fontSize: 30,
-          fontFamily: 'Arial',
-        });
-        canvasToUse.add(text);
-        canvasToUse.setActiveObject(text);
-        canvasToUse.renderAll();
-        
-        debugOutput.textContent += ' - Added to canvas successfully';
-      } else {
-        alert('Canvas not found!');
-      }
-    });
-    
-    // Set up output panel clear button
-    document.getElementById('clear-output').addEventListener('click', function(e) {
-      e.stopPropagation();
-      document.getElementById('output-content').innerHTML = 'Output cleared.';
-    });
-
-    // Toggle output panel on mobile
-    document.querySelector('.output-title').addEventListener('click', function() {
-      document.getElementById('output-panel').classList.toggle('collapsed');
-    });
-    // Start collapsed on mobile
-    if (window.innerWidth <= 768) {
-      document.getElementById('output-panel').classList.add('collapsed');
-    }
-    
-    // Add a global function to append to the output panel
-    window.appendToOutput = function(content, isError = false) {
-      const outputContent = document.getElementById('output-content');
-      const resultBlock = document.createElement('div');
-      resultBlock.className = isError ? 'result-block error-block' : 'result-block';
-      resultBlock.innerHTML = content;
-      
-      // Add timestamp
-      const timestamp = document.createElement('div');
-      timestamp.style.fontSize = '11px';
-      timestamp.style.color = '#777';
-      timestamp.style.marginTop = '5px';
-      timestamp.textContent = new Date().toLocaleTimeString();
-      resultBlock.appendChild(timestamp);
-      
-      outputContent.appendChild(resultBlock);
-      
-      // Scroll to bottom
-      outputContent.scrollTop = outputContent.scrollHeight;
-    };
-  </script>
 </body>
 </html>

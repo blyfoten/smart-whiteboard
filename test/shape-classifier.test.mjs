@@ -1,0 +1,132 @@
+// Plain-Node sanity tests for the pure stroke classifier (no test framework).
+// Run: node test/shape-classifier.test.mjs
+import assert from 'node:assert';
+import { classifyStroke } from '../src/shape-classifier.js';
+
+let passed = 0;
+function check(name, fn) {
+  try {
+    fn();
+    passed++;
+    console.log(`  ok  ${name}`);
+  } catch (err) {
+    console.error(`FAIL  ${name}\n      ${err.message}`);
+    process.exitCode = 1;
+  }
+}
+
+// ---- synthetic stroke generators (with a little jitter) ----
+const jitter = (v, amt = 2) => v + (Math.random() - 0.5) * amt;
+
+function line(a, b, n = 30) {
+  return Array.from({ length: n + 1 }, (_, i) => {
+    const t = i / n;
+    return { x: jitter(a.x + (b.x - a.x) * t), y: jitter(a.y + (b.y - a.y) * t) };
+  });
+}
+
+function ellipsePts(cx, cy, rx, ry, n = 60) {
+  return Array.from({ length: n + 1 }, (_, i) => {
+    const θ = (i / n) * 2 * Math.PI;
+    return { x: jitter(cx + rx * Math.cos(θ)), y: jitter(cy + ry * Math.sin(θ)) };
+  });
+}
+
+function rectPts(x, y, w, h, per = 15) {
+  const corners = [
+    [x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y],
+  ].map(([px, py]) => ({ x: px, y: py }));
+  const pts = [];
+  for (let i = 0; i < corners.length - 1; i++) {
+    pts.push(...line(corners[i], corners[i + 1], per));
+  }
+  return pts;
+}
+
+function arrowPts(a, b) {
+  const shaft = line(a, b, 30);
+  const angle = Math.atan2(b.y - a.y, b.x - a.x);
+  const headLen = 22;
+  const θ = (28 * Math.PI) / 180;
+  const h1 = { x: b.x - headLen * Math.cos(angle - θ), y: b.y - headLen * Math.sin(angle - θ) };
+  return [...shaft, ...line(b, h1, 8)];
+}
+
+// A rectangle with shaky (not perfectly straight) sides — an unsteady hand on a
+// touchscreen. The wobble oscillates along each side so it nets ~zero area
+// change, the way real shaky-but-straight strokes do.
+function wobblyRectPts(x, y, w, h, per = 22, bow = 9) {
+  const corners = [
+    [x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y],
+  ].map(([px, py]) => ({ x: px, y: py }));
+  const pts = [];
+  for (let i = 0; i < 4; i++) {
+    const a = corners[i], b = corners[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    const nx = -dy / len, ny = dx / len; // perpendicular
+    for (let j = 0; j <= per; j++) {
+      const t = j / per;
+      const off = Math.sin(t * Math.PI * 4) * bow; // oscillating wobble (net ~0)
+      pts.push({ x: jitter(a.x + dx * t + nx * off, 4), y: jitter(a.y + dy * t + ny * off, 4) });
+    }
+  }
+  return pts;
+}
+
+// ---- tests ----
+check('horizontal line → line', () => {
+  const d = classifyStroke(line({ x: 40, y: 100 }, { x: 360, y: 108 }));
+  assert.equal(d?.type, 'line');
+});
+
+check('diagonal line → line', () => {
+  const d = classifyStroke(line({ x: 50, y: 60 }, { x: 300, y: 320 }));
+  assert.equal(d?.type, 'line');
+});
+
+check('circle → circle', () => {
+  const d = classifyStroke(ellipsePts(200, 200, 90, 90));
+  assert.equal(d?.type, 'circle');
+});
+
+check('wide ellipse → ellipse', () => {
+  const d = classifyStroke(ellipsePts(200, 200, 140, 70));
+  assert.equal(d?.type, 'ellipse');
+});
+
+check('rectangle → rect', () => {
+  const d = classifyStroke(rectPts(60, 60, 240, 140));
+  assert.equal(d?.type, 'rect');
+});
+
+check('wobbly-sided rectangle → rect (not oval)', () => {
+  const d = classifyStroke(wobblyRectPts(60, 60, 240, 150));
+  assert.equal(d?.type, 'rect');
+});
+
+check('small square with shaky sides → rect', () => {
+  const d = classifyStroke(wobblyRectPts(100, 100, 110, 95, 16, 7));
+  assert.equal(d?.type, 'rect');
+});
+
+check('arrow → arrow', () => {
+  const d = classifyStroke(arrowPts({ x: 60, y: 200 }, { x: 320, y: 200 }));
+  assert.equal(d?.type, 'arrow');
+});
+
+check('tiny stroke → null (stays ink)', () => {
+  const d = classifyStroke(line({ x: 100, y: 100 }, { x: 110, y: 104 }));
+  assert.equal(d, null);
+});
+
+check('scribble / handwriting → null (stays ink)', () => {
+  // A messy zig-zag that is neither straight, closed, nor a clean primitive.
+  const pts = [];
+  for (let i = 0; i <= 40; i++) {
+    pts.push({ x: 80 + i * 4, y: 150 + Math.sin(i * 1.7) * 35 + (Math.random() - 0.5) * 20 });
+  }
+  assert.equal(classifyStroke(pts), null);
+});
+
+console.log(`\n${passed} checks passed.`);

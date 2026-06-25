@@ -2,7 +2,8 @@
 
 import { getCanvas, undoLast, saveScreenshot, clearCanvas } from './canvas.js';
 import { IText } from 'fabric';
-import { solveEquation, solveEquationFromText, extractEquation, drawGraph } from './api.js';
+import { solveEquationFromText, extractEquation, drawGraph } from './api.js';
+import { redrawLastGraph } from './graph.js';
 import { toggleRecognition } from './speech.js';
 
 let currentModel = 'math';
@@ -44,6 +45,7 @@ export function initializeModelSelectionUI() {
     { value: 'math', text: 'Math.js (Simple)' },
     { value: 'gpt', text: 'GPT (Advanced)' },
     { value: 'gemini', text: 'Gemini (Advanced)' },
+    { value: 'claude', text: 'Claude (Advanced)' },
   ].forEach(opt => {
     const o = document.createElement('option');
     o.value = opt.value;
@@ -70,11 +72,11 @@ export function setupCanvasEventListeners() {
       left: pointer.x,
       top: pointer.y,
       fill: 'red',
-      fontSize: 20,
+      fontSize: 24,
       backgroundColor: 'transparent',
       selectable: true,
       editable: true,
-      fontFamily: 'Arial',
+      fontFamily: 'Caveat, cursive',
     });
     canvas.add(text);
     canvas.setActiveObject(text);
@@ -83,7 +85,37 @@ export function setupCanvasEventListeners() {
   });
 }
 
+function initSettingsMenu() {
+  const btn = document.getElementById('settings-btn');
+  const menu = document.getElementById('settings-menu');
+  if (!btn || !menu) return;
+
+  const setOpen = (open) => {
+    menu.classList.toggle('hidden', !open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setOpen(menu.classList.contains('hidden'));
+  });
+  // Keep the menu open when interacting inside it (but let selects work).
+  menu.addEventListener('click', (e) => e.stopPropagation());
+  // Dismiss on outside click or Escape.
+  document.addEventListener('click', () => setOpen(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setOpen(false);
+  });
+}
+
 export function initializeEventListeners() {
+  initSettingsMenu();
+
+  const gridSel = document.getElementById('graph-grid-select');
+  if (gridSel) {
+    gridSel.addEventListener('change', () => redrawLastGraph());
+  }
+
   const startRecordBtn = document.getElementById('start-record-btn');
   if (startRecordBtn) {
     startRecordBtn.addEventListener('click', toggleRecognition);
@@ -104,52 +136,51 @@ export function initializeEventListeners() {
     saveBtn.addEventListener('click', () => saveScreenshot(getCanvas()));
   }
 
-  const uiElement = document.querySelector('.ui-element');
-  if (!uiElement) return;
-
-  // Create solve button if missing
-  if (!document.getElementById('solve-eq-btn')) {
-    const solveBtn = document.createElement('button');
-    solveBtn.id = 'solve-eq-btn';
-    solveBtn.textContent = 'Solve Equation';
-    solveBtn.addEventListener('click', solveEquation);
-    uiElement.insertBefore(solveBtn, document.getElementById('status'));
-  } else {
-    document.getElementById('solve-eq-btn').addEventListener('click', solveEquation);
+  const clearBtn = document.getElementById('clear-btn');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => clearCanvas(getCanvas()));
   }
 
-  // Create graph button if missing
-  if (!document.getElementById('graph-btn')) {
-    const graphBtn = document.createElement('button');
-    graphBtn.id = 'graph-btn';
-    graphBtn.textContent = 'Draw Graph';
+  const addTestBtn = document.getElementById('add-test-equation-btn');
+  if (addTestBtn) {
+    addTestBtn.addEventListener('click', () => {
+      const input = document.getElementById('test-equation');
+      const equation = input && input.value.trim();
+      if (!equation) {
+        alert('Please enter a test equation');
+        return;
+      }
+      const canvas = getCanvas();
+      if (!canvas) {
+        alert('Canvas not found!');
+        return;
+      }
+      const text = new IText(equation, {
+        left: 100,
+        top: 100,
+        fill: 'black',
+        fontSize: 36,
+        fontFamily: 'Caveat, cursive',
+      });
+      canvas.add(text);
+      canvas.setActiveObject(text);
+      canvas.requestRenderAll();
+    });
+  }
+
+  // Solving is now a contextual action on an analyzed equation (see
+  // equation-menu.js), so there's no standalone Solve button to wire.
+
+  const graphBtn = document.getElementById('graph-btn');
+  if (graphBtn) {
     graphBtn.addEventListener('click', drawGraph);
-    const solveBtn = document.getElementById('solve-eq-btn');
-    if (solveBtn) {
-      uiElement.insertBefore(graphBtn, solveBtn.nextSibling);
-    } else {
-      uiElement.insertBefore(graphBtn, document.getElementById('status'));
-    }
-  } else {
-    document.getElementById('graph-btn').addEventListener('click', drawGraph);
   }
 
-  // Force solve button
-  let forceSolveBtn = document.getElementById('force-solve-btn');
-  if (!forceSolveBtn) {
-    forceSolveBtn = document.createElement('button');
-    forceSolveBtn.id = 'force-solve-btn';
-    forceSolveBtn.textContent = 'Force Solve';
-    forceSolveBtn.style.backgroundColor = '#ffdddd';
-    const debugOutput = document.getElementById('debug-output');
-    if (debugOutput) {
-      uiElement.insertBefore(forceSolveBtn, debugOutput);
-    } else {
-      uiElement.appendChild(forceSolveBtn);
-    }
+  const forceSolveBtn = document.getElementById('force-solve-btn');
+  if (forceSolveBtn) {
+    forceSolveBtn.addEventListener('click', () => {
+      const equation = prompt('Enter equation to solve (e.g. x^2 + 3*x - 5 = 0):');
+      if (equation) solveEquationFromText(equation);
+    });
   }
-  forceSolveBtn.addEventListener('click', () => {
-    const equation = prompt('Enter equation to solve (e.g. x^2 + 3*x - 5 = 0):');
-    if (equation) solveEquationFromText(equation);
-  });
 }

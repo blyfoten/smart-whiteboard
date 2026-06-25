@@ -1,379 +1,205 @@
 // server.js
 require('dotenv').config();
+
+// The git watcher pulls but does not run `npm install`. If a declared SDK is
+// missing (e.g. just added in a pulled commit), install dependencies before
+// continuing so providers come up without manual intervention. Runs once at
+// startup, only when something is actually missing. Disable with NO_AUTO_INSTALL=1.
+function ensureDependencies() {
+    if (process.env.NO_AUTO_INSTALL) return;
+    const required = ['openai', '@google/genai', '@anthropic-ai/sdk'];
+    const missing = required.filter((mod) => {
+        try {
+            require.resolve(mod);
+            return false;
+        } catch (e) {
+            return true;
+        }
+    });
+    if (missing.length === 0) return;
+    console.warn(`📦 Missing dependencies (${missing.join(', ')}) — running npm install...`);
+    try {
+        require('child_process').execSync('npm install', { cwd: __dirname, stdio: 'inherit' });
+        console.warn('📦 npm install complete.');
+    } catch (e) {
+        console.error('📦 Auto npm install failed:', e.message);
+        console.error('   Affected providers stay disabled until installed manually.');
+    }
+}
+ensureDependencies();
+
+// The git watcher pulls but doesn't rebuild the webpack bundle. If webpack
+// --watch isn't running, the served bundle goes stale. Rebuild it on startup
+// when any src/*.js is newer than public/dist/bundle.js. Disable with NO_AUTO_BUILD=1.
+function ensureBundle() {
+    if (process.env.NO_AUTO_BUILD) return;
+    const fs = require('fs');
+    const path = require('path');
+    const bundlePath = path.join(__dirname, 'public', 'dist', 'bundle.js');
+    const srcDir = path.join(__dirname, 'src');
+    let bundleMtime = 0;
+    try {
+        bundleMtime = fs.statSync(bundlePath).mtimeMs;
+    } catch (e) {
+        bundleMtime = 0; // missing bundle
+    }
+    let newestSrc = 0;
+    try {
+        for (const f of fs.readdirSync(srcDir)) {
+            if (f.endsWith('.js')) {
+                const m = fs.statSync(path.join(srcDir, f)).mtimeMs;
+                if (m > newestSrc) newestSrc = m;
+            }
+        }
+    } catch (e) {
+        return; // no src dir — nothing to build
+    }
+    if (bundleMtime && bundleMtime >= newestSrc) return; // up to date
+    console.warn('📦 Bundle missing or stale — running npm run build...');
+    try {
+        require('child_process').execSync('npm run build', { cwd: __dirname, stdio: 'inherit' });
+        console.warn('📦 Bundle build complete.');
+    } catch (e) {
+        console.error('📦 Auto build failed:', e.message);
+    }
+}
+ensureBundle();
+
 const express = require('express');
 const bodyParser = require('body-parser');
 const math = require('mathjs');
 const cors = require('cors');
 const path = require('path');
-const axios = require('axios');
-// Import the Google AI library (will need to be installed using npm)
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+
+// Vision/solve providers live behind a small interface (providers/). Model IDs
+// are centralized and env-overridable there.
+const providers = require('./providers');
+const { validateExtraction } = require('./providers/schema');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize the Gemini API client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Warn loudly at startup instead of failing opaquely at request time.
+if (!process.env.OPENAI_API_KEY) console.warn('⚠️  OPENAI_API_KEY is not set — OpenAI (gpt) requests will fail.');
+if (!process.env.GEMINI_API_KEY) console.warn('⚠️  GEMINI_API_KEY is not set — Gemini requests will fail.');
+if (!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_API_KEY) console.warn('⚠️  ANTHROPIC_API_KEY (or CLAUDE_API_KEY) is not set — Claude requests will fail.');
+
+// Minimal in-memory per-IP rate limiter for the billable AI endpoints. Not a
+// substitute for real auth — just a guard so a public instance can't be trivially
+// drained of API credits.
+function rateLimit({ windowMs, max }) {
+    const hits = new Map();
+    setInterval(() => {
+        const cutoff = Date.now() - windowMs;
+        for (const [ip, rec] of hits) if (rec.start < cutoff) hits.delete(ip);
+    }, windowMs).unref();
+    return (req, res, next) => {
+        const ip = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
+        const now = Date.now();
+        let rec = hits.get(ip);
+        if (!rec || now - rec.start > windowMs) {
+            rec = { start: now, count: 0 };
+            hits.set(ip, rec);
+        }
+        rec.count++;
+        if (rec.count > max) {
+            return res.status(429).json({ success: false, message: 'Rate limit exceeded — please slow down.' });
+        }
+        next();
+    };
+}
+const aiLimiter = rateLimit({ windowMs: 60 * 1000, max: 30 });
 
 // Middleware
 app.use(bodyParser.json({ limit: '10mb' })); // Increase size limit for large images
-app.use(cors());
+
+// Lock down CORS: allow same-origin / non-browser requests (no Origin header)
+// and any origin in ALLOWED_ORIGINS (comma-separated). Other cross-origin browser
+// calls get no CORS headers and are blocked by the browser. The app itself is
+// served same-origin, so this doesn't affect normal use.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+app.use(cors({
+    origin(origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(null, false);
+    },
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Function to solve equation with GPT API
-async function solveEquationWithGPT(equation) {
-    try {
-        const gptResponse = await axios.post(
-            'https://api.openai.com/v1/chat/completions',
-            {
-                model: 'gpt-4', // Or another available model with mathematical capabilities
-                messages: [
-                    { role: 'system', content: 'You are a mathematical assistant.' },
-                    { role: 'user', content: `Solve the equation: ${equation}` }
-                ]
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
-                }
-            }
-        );
+// Serve the living improvement/feature plan at /plan
+app.get('/plan', (req, res) => {
+    res.sendFile(path.join(__dirname, 'docs', 'improvement-plan.html'));
+});
 
-        const solution = gptResponse.data.choices[0].message.content.trim();
-        return solution;
-    } catch (error) {
-        console.error('Error in solveEquationWithGPT:', error.response ? error.response.data : error.message);
-        return null;
-    }
-}
-
-// Function to solve equation with Gemini API
-async function solveEquationWithGemini(equation) {
-    try {
-        console.log(`Solving equation with Gemini: ${equation}`);
-        
-        // Get the model
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-        
-        // Create a more specific prompt
-        const prompt = `You are a mathematical assistant. Solve the equation: ${equation}
-
-Please provide a clear, concise solution. Don't use markdown formatting in your response.
-Simply start with "The solution is:" followed by the answer.`;
-        
-        // Generate content
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let solution = response.text();
-        
-        console.log(`Raw Gemini solution response: ${solution}`);
-        
-        // Extract just the solution part if it follows our format
-        if (solution.includes("The solution is:")) {
-            solution = solution.split("The solution is:")[1].trim();
-            console.log(`Extracted solution: ${solution}`);
-        } else {
-            console.log(`Solution format not found, using full response`);
-        }
-        
-        return solution;
-    } catch (error) {
-        console.error('Error in solveEquationWithGemini:', error);
-        if (error.response) {
-            console.error('Gemini API response error:', error.response);
-        }
-        return null;
-    }
-}
-
-// API endpoint to extract equation from canvas
-app.post('/extract-equation', async (req, res) => {
+// Shared handler for vision extraction across providers.
+async function handleExtract(req, res, providerName) {
     const { image } = req.body;
-
     if (!image) {
         return res.json({ success: false, message: 'No image received.' });
     }
-
-    try {
-        // Send image to OpenAI Vision API
-        const openAIResponse = await axios.post(
-            'https://api.openai.com/v1/chat/completions',
-            {
-                "model": "gpt-4o",
-                "response_format": { "type": "json_object" }, // Enforce JSON response format
-                "messages": [
-                  {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": `You are an AI specialized in interpreting handwritten mathematical equations from images and converting them into structured JSON suitable for math.js.
-
-Your task is to analyze the image and extract the mathematical equation, then return a properly structured JSON response.
-
-IMPORTANT REQUIREMENTS:
-1. Return ONLY valid JSON without any markdown formatting, explanatory text, or code blocks
-2. Do not include backticks (\`\`\`) or "json" tags around your response
-3. Ensure all JSON is properly formatted and can be parsed with JSON.parse()
-
-JSON SCHEMA:
-{
-  "dependentVariable": "string", // Variable on the left side of the equation (e.g., "y")
-  "expression": "string",        // Right side of the equation in math.js format (e.g., "x^2 + 3*x")
-  "scope": {                     // Sample values for each variable
-    "variableName": number       // e.g., "x": 0
-  },
-  "ranges": {                    // Min/max values for plotting each variable
-    "variableName": [number, number] // e.g., "x": [-10, 10]
-  }
-}
-
-If you cannot interpret the equation, return exactly:
-{"error": "Unable to interpret the handwritten equation. Please ensure the handwriting is clear."}`
-                        }
-                    ]
-                  },
-                  {
-                    "role": "user",
-                    "content": [
-                      {
-                        "type": "image_url",
-                        "image_url": {
-                          "url": image
-                        }
-                      }
-                    ]
-                  }
-                ],
-                "max_tokens": 500
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
-                }
-            }
-        );
-
-        // Extract and parse the JSON response
-        let jsonContent = openAIResponse.data.choices[0].message.content.trim();
-        
-        // Log the raw response for debugging
-        console.log("Raw OpenAI response:", jsonContent);
-        
-        // Handle any cleanup needed
-        try {
-            const extractedData = JSON.parse(jsonContent);
-            
-            if (extractedData.error) {
-                return res.json({ success: false, message: extractedData.error });
-            }
-            
-            // Validate required fields
-            if (!extractedData.expression || !extractedData.dependentVariable || 
-                !extractedData.scope || !extractedData.ranges) {
-                return res.json({ 
-                    success: false, 
-                    message: 'Invalid response format: missing required fields.' 
-                });
-            }
-
-            res.json({ 
-                success: true, 
-                equation: extractedData.expression,
-                dependentVariable: extractedData.dependentVariable,
-                scope: extractedData.scope,
-                ranges: extractedData.ranges
-            });
-        } catch (parseError) {
-            console.error('JSON parse error:', parseError);
-            console.error('Raw content received:', jsonContent);
-            return res.json({ 
-                success: false, 
-                message: 'Failed to parse the response as JSON. Please try again.' 
-            });
-        }
-    } catch (error) {
-        console.error('Error in /extract-equation:', error.response ? error.response.data : error.message);
-        res.json({ success: false, message: 'Error processing the image.' });
+    const provider = providers.get(providerName);
+    if (!provider || !provider.extract) {
+        return res.json({ success: false, message: `Unknown provider: ${providerName}` });
     }
-});
-
-// API endpoint to solve equations with selected model
-app.post('/solve', async (req, res) => {
-    const { equation, model = 'math' } = req.body;
-    console.log(`===== SOLVE REQUEST =====`);
-    console.log(`Equation: "${equation}"`);
-    console.log(`Model: ${model}`);
-    console.log(`Request body: ${JSON.stringify(req.body)}`);
-    
-    try {
-        // Use math.js by default (for simple equations)
-        if (model === 'math') {
-            console.log(`Using Math.js for equation: ${equation}`);
-            const result = math.evaluate(equation);
-            console.log(`Math.js result: ${result}`);
-            res.json({ success: true, result });
-        } 
-        // Use GPT for complex equations
-        else if (model === 'gpt') {
-            console.log(`Using GPT for equation: ${equation}`);
-            const result = await solveEquationWithGPT(equation);
-            if (result) {
-                console.log(`GPT result: ${result}`);
-                res.json({ success: true, result });
-            } else {
-                console.error(`GPT failed to solve equation: ${equation}`);
-                res.json({ success: false, message: 'Error solving equation with GPT.' });
-            }
-        }
-        // Use Gemini for complex equations
-        else if (model === 'gemini') {
-            console.log(`Using Gemini for equation: ${equation}`);
-            const result = await solveEquationWithGemini(equation);
-            if (result) {
-                console.log(`Gemini result: ${result}`);
-                res.json({ success: true, result });
-            } else {
-                console.error(`Gemini failed to solve equation: ${equation}`);
-                res.json({ success: false, message: 'Error solving equation with Gemini.' });
-            }
-        }
-        else {
-            console.error(`Invalid model specified: ${model}`);
-            res.json({ success: false, message: 'Invalid model specified.' });
-        }
-    } catch (error) {
-        console.error(`Error processing equation "${equation}" with model ${model}:`, error);
-        res.json({ success: false, message: `Error solving equation: ${error.message}` });
+    if (!provider.isConfigured()) {
+        return res.json({ success: false, message: `${providerName} is not configured on the server.` });
     }
-});
-
-// Add a new endpoint for extracting equation with Gemini
-app.post('/extract-equation-gemini', async (req, res) => {
-    const { image } = req.body;
-
-    if (!image) {
-        return res.json({ success: false, message: 'No image received.' });
-    }
-
     try {
-        // Initialize Gemini model - removing the unsupported responseSchema
-        const model = genAI.getGenerativeModel({ 
-            model: "gemini-2.0-flash"
+        const data = await provider.extract(image);
+        const errorMessage = validateExtraction(data);
+        if (errorMessage) {
+            return res.json({ success: false, message: errorMessage });
+        }
+        return res.json({
+            success: true,
+            equation: data.expression,
+            dependentVariable: data.dependentVariable,
+            scope: data.scope,
+            ranges: data.ranges,
         });
-        
-        // Prepare the prompt with system instructions
-        const systemPrompt = `You are an AI specialized in interpreting handwritten mathematical equations from images and converting them into structured JSON suitable for math.js.
-
-Your task is to analyze the image and extract the mathematical equation, then return a properly structured JSON response.
-
-IMPORTANT REQUIREMENTS:
-1. Return ONLY valid JSON without any markdown formatting, explanatory text, or code blocks
-2. Do not include backticks (\`\`\`) or "json" tags around your response
-3. Ensure all JSON is properly formatted and can be parsed with JSON.parse()
-
-The JSON must follow this schema exactly:
-{
-  "dependentVariable": "string", // Variable on the left side of the equation (e.g., "y")
-  "expression": "string",        // Right side of the equation in math.js format (e.g., "x^2 + 3*x")
-  "scope": {                     // Sample values for each variable
-    "variableName": number       // e.g., "x": 0
-  },
-  "ranges": {                    // Min/max values for plotting each variable
-    "variableName": [number, number] // e.g., "x": [-10, 10]
-  }
+    } catch (error) {
+        console.error(`Error extracting with ${providerName}:`, error.message);
+        return res.json({ success: false, message: 'Error processing the image.' });
+    }
 }
 
-Example of good response:
-{"dependentVariable":"y","expression":"x^2+3*x-5","scope":{"x":0},"ranges":{"x":[-10,10]}}
+// Unified extraction endpoint — `provider` selects the vision model.
+app.post('/extract', aiLimiter, (req, res) => handleExtract(req, res, req.body.provider || 'openai'));
 
-If you cannot interpret the equation, return exactly:
-{"error": "Unable to interpret the handwritten equation. Please ensure the handwriting is clear."}`;
+// Back-compat aliases for older clients / cached bundles.
+app.post('/extract-equation', aiLimiter, (req, res) => handleExtract(req, res, 'openai'));
+app.post('/extract-equation-gemini', aiLimiter, (req, res) => handleExtract(req, res, 'gemini'));
 
-        // Convert base64 image to parts for Gemini
-        const imageData = image.split(',')[1]; // Remove the data:image/png;base64, part
-        const imagePart = {
-            inlineData: {
-                data: imageData,
-                mimeType: "image/png"
-            }
-        };
-        
-        // Generate content
-        const result = await model.generateContent([systemPrompt, imagePart]);
-        const response = await result.response;
-        const content = response.text();
-
-        // Extract JSON from Markdown-formatted response if needed
-        let jsonString = content;
-
-        // Function to extract JSON from Markdown code blocks
-        function extractJsonFromMarkdown(text) {
-            // Check for code blocks with json or JSON tag
-            const jsonCodeBlockRegex = /```(?:json|JSON)?\s*([\s\S]*?)```/;
-            const match = text.match(jsonCodeBlockRegex);
-            
-            if (match && match[1]) {
-                return match[1].trim();
-            }
-            
-            // Try to find JSON without code blocks by looking for opening brace
-            const jsonStart = text.indexOf('{');
-            const jsonEnd = text.lastIndexOf('}');
-            if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
-                return text.substring(jsonStart, jsonEnd + 1);
-            }
-            
-            return text; // Return original if no code blocks found
+// API endpoint to solve equations with the selected model.
+app.post('/solve', aiLimiter, async (req, res) => {
+    const { equation, model = 'math' } = req.body;
+    try {
+        if (model === 'math') {
+            const result = math.evaluate(equation);
+            return res.json({ success: true, result });
         }
-
-        // Clean up the response
-        jsonString = extractJsonFromMarkdown(jsonString);
-        console.log('Raw Gemini response:', content);
-        console.log('Cleaned JSON string:', jsonString);
-
-        try {
-            // Parse the JSON response
-            const extractedData = JSON.parse(jsonString);
-
-            if (extractedData.error) {
-                return res.json({ success: false, message: extractedData.error });
-            }
-            
-            // Validate required fields
-            if (!extractedData.expression || !extractedData.dependentVariable || 
-                !extractedData.scope || !extractedData.ranges) {
-                return res.json({ 
-                    success: false, 
-                    message: 'Invalid response format: missing required fields.' 
-                });
-            }
-
-            res.json({ 
-                success: true, 
-                equation: extractedData.expression,
-                dependentVariable: extractedData.dependentVariable,
-                scope: extractedData.scope,
-                ranges: extractedData.ranges
-            });
-        } catch (parseError) {
-            console.error('JSON Parse Error:', parseError);
-            console.error('Raw content received:', content);
-            return res.json({ 
-                success: false, 
-                message: 'Failed to parse the response from Gemini API. Please try again.' 
-            });
+        const provider = providers.get(model); // 'gpt' -> openai, 'gemini' -> gemini
+        if (!provider || !provider.solve) {
+            return res.json({ success: false, message: 'Invalid model specified.' });
         }
-
+        if (!provider.isConfigured()) {
+            return res.json({ success: false, message: `${model} is not configured on the server.` });
+        }
+        const result = await provider.solve(equation);
+        if (result) {
+            return res.json({ success: true, result });
+        }
+        return res.json({ success: false, message: `Error solving equation with ${model}.` });
     } catch (error) {
-        console.error('Error in /extract-equation-gemini:', error);
-        res.json({ success: false, message: 'Error processing the image with Gemini.' });
+        console.error(`Error solving "${equation}" with ${model}:`, error.message);
+        return res.json({ success: false, message: `Error solving equation: ${error.message}` });
     }
 });
 
-// Adjust the /graph endpoint
+// Graph endpoint — pure math.js.
 app.post('/graph', (req, res) => {
     const { expression, dependentVariable, scope, ranges } = req.body;
     const variable = Object.keys(scope)[0]; // Assume first variable in scope is the one to plot
@@ -399,10 +225,29 @@ app.post('/graph', (req, res) => {
 });
 
 // Start the server with port fallback
+const fs = require('fs');
+const http = require('http');
+const https = require('https');
+const { attachVoiceServer } = require('./voice-server');
 const HOST = process.env.HOST || '0.0.0.0';
+const CERT_DIR = process.env.CERT_DIR || '/etc/letsencrypt/live/cfor2.asuscomm.com';
 
 function startServer(port) {
-    app.listen(port, HOST)
+    let server;
+    try {
+        const tlsOptions = {
+            key:  fs.readFileSync(`${CERT_DIR}/privkey.pem`),
+            cert: fs.readFileSync(`${CERT_DIR}/fullchain.pem`),
+        };
+        server = https.createServer(tlsOptions, app);
+        server.on('listening', () => console.log(`Server running on https://${HOST}:${port}`));
+    } catch (err) {
+        console.warn(`HTTPS unavailable (${err.message}), falling back to HTTP.`);
+        server = http.createServer(app);
+        server.on('listening', () => console.log(`Server running on http://${HOST}:${port}`));
+    }
+    attachVoiceServer(server); // WebSocket relay for the Gemini Live voice mode
+    server
         .on('error', (err) => {
             if (err.code === 'EADDRINUSE') {
                 console.log(`Port ${port} is already in use, trying port ${port + 1}...`);
@@ -410,10 +255,8 @@ function startServer(port) {
             } else {
                 console.error('Error starting server:', err);
             }
-        })
-        .on('listening', () => {
-            console.log(`Server running on http://${HOST}:${port}`);
         });
+    server.listen(port, HOST);
 }
 
 // Start the server with initial port
