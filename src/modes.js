@@ -8,12 +8,14 @@
 // Hold Space to temporarily drop into Select without leaving the current mode.
 
 import { pathToPoints, recognizeStroke } from './shapes.js';
+import { snapPointToShapes } from './edge-snap.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
 let _canvas = null;
 
 const GHOST_OPACITY = 0.3;          // faded original stroke kept under the snapped shape
+const EDGE_SNAP_PX = 22;            // screen-pixel radius for endpoint edge-snapping
 
 export function getMode() {
   return _mode;
@@ -61,6 +63,34 @@ function _shouldBeautify() {
   return false;
 }
 
+// Pull a just-recognized polyline/line's first & last vertex onto a nearby
+// existing shape edge. The new shape isn't on the canvas yet, and its `points`
+// are still in scene coordinates (no transform applied), so we can read/write
+// them directly. Records the snapped target on the shape for later anchoring.
+function _snapEndpointsToEdges(shape) {
+  const pts = shape.points;
+  if (!pts || pts.length < 2) return;
+  const targets = _canvas.getObjects().filter((o) => o._isShape && !o._isGhost && o !== shape);
+  if (!targets.length) return;
+
+  const maxDist = EDGE_SNAP_PX / (_canvas.getZoom() || 1); // ~constant on screen
+  let changed = false;
+  const anchors = {};
+  [0, pts.length - 1].forEach((i) => {
+    const hit = snapPointToShapes(pts[i], targets, maxDist);
+    if (hit) {
+      pts[i] = hit.point;
+      anchors[i] = hit.target;
+      changed = true;
+    }
+  });
+  if (changed) {
+    shape._edgeAnchors = anchors; // groundwork for sticky anchoring (feature 2)
+    shape.setBoundingBox(true);
+    shape.setCoords();
+  }
+}
+
 // Swap a freehand path for a recognized primitive, with a brief fade-in.
 function _onPathCreated(e) {
   if (!_shouldBeautify()) return;
@@ -84,6 +114,13 @@ function _onPathCreated(e) {
 
   const { shape } = result;
   shape.set({ selectable: true, evented: true, opacity: 0.5, _isShape: true });
+
+  // Edge snap: if an open polyline/line's start or end was drawn close to an
+  // existing shape's outline, pull that endpoint onto the edge for a clean join.
+  if (result.type === 'line' || result.type === 'polyline') {
+    _snapEndpointsToEdges(shape);
+  }
+
   _canvas.add(shape);
   // Brief fade-in as a "snap" cue. Guarded so any animate API mismatch still
   // leaves the shape fully opaque rather than half-faded.
