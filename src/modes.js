@@ -10,7 +10,7 @@
 import { pathToPoints, recognizeStroke } from './shapes.js';
 import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
 import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
-import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
+import { suspend as historySuspend, pushComposite, onAfterUndo } from './history.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
@@ -160,10 +160,9 @@ function _onPathCreated(e) {
     _snapEndpointsToEdges(shape);
   }
 
-  // Replace the freehand stroke with the clean shape as ONE undo step: drop the
-  // path's own add-entry, remove the original stroke (kept in `path`), add the
-  // shape, and record a composite whose undo restores the original stroke.
-  historyPopLast();
+  // Replace the freehand stroke with the clean shape. Keep the stroke's own
+  // add-entry below and push the snap on top, so it's two undo steps: first undo
+  // restores the original stroke, second undo removes it (undoes the drawing).
   historySuspend(() => {
     _canvas.remove(path);
     _canvas.add(shape);
