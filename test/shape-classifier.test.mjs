@@ -136,9 +136,31 @@ check('heart → not a rect (stays ink)', () => {
   assert.notEqual(d?.type, 'rect');
 });
 
-check('triangle → not a rect', () => {
+check('triangle → polygon', () => {
   const d = classifyStroke(trianglePts(200, 200, 120));
-  assert.notEqual(d?.type, 'rect');
+  assert.equal(d?.type, 'polygon');
+  assert.equal(d.points.length, 3);
+});
+
+check('closed notched (L) outline → polygon', () => {
+  // A rectangle with a bite taken out of one corner (6 vertices), closed.
+  const c = [
+    { x: 60, y: 60 }, { x: 260, y: 60 }, { x: 260, y: 160 },
+    { x: 160, y: 160 }, { x: 160, y: 260 }, { x: 60, y: 260 }, { x: 60, y: 60 },
+  ];
+  const pts = [];
+  for (let i = 0; i < c.length - 1; i++) pts.push(...line(c[i], c[i + 1], 18));
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polygon');
+  assert.ok(d.points.length >= 5 && d.points.length <= 7);
+});
+
+check('circle stays circle (not polygon)', () => {
+  assert.equal(classifyStroke(ellipsePts(200, 200, 90, 90))?.type, 'circle');
+});
+
+check('clean rectangle stays rect (not polygon)', () => {
+  assert.equal(classifyStroke(rectPts(60, 60, 240, 140))?.type, 'rect');
 });
 
 check('arrow → arrow', () => {

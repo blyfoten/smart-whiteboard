@@ -3,15 +3,17 @@
 // Pure geometry/classification lives in shape-classifier.js (no Fabric, unit
 // tested). This module owns only the Fabric object construction.
 
-import { Rect, Ellipse, Path, Polyline } from 'fabric';
+import { Rect, Ellipse, Path, Polyline, Polygon } from 'fabric';
 import { classifyStroke, pathToPoints } from './shape-classifier.js';
 import { enablePointEditing } from './node-edit.js';
 
 export { pathToPoints };
 
-// A straight or multi-segment stroke becomes a Polyline with draggable vertices.
-function buildPolyline(points, opts) {
-  const poly = new Polyline(points, {
+// A straight or multi-segment stroke becomes a Polyline/Polygon with draggable
+// vertices. `closed` true → a Polygon (closed loop), else an open Polyline.
+function buildPoly(points, opts, closed) {
+  const Ctor = closed ? Polygon : Polyline;
+  const poly = new Ctor(points, {
     stroke: opts.color,
     strokeWidth: opts.strokeWidth,
     fill: '',
@@ -53,10 +55,12 @@ export function recognizeStroke(pts, opts = {}) {
     case 'line':
       return {
         type: 'line',
-        shape: buildPolyline([{ x: desc.a.x, y: desc.a.y }, { x: desc.b.x, y: desc.b.y }], { color, strokeWidth }),
+        shape: buildPoly([{ x: desc.a.x, y: desc.a.y }, { x: desc.b.x, y: desc.b.y }], { color, strokeWidth }, false),
       };
     case 'polyline':
-      return { type: 'polyline', shape: buildPolyline(desc.points, { color, strokeWidth }) };
+      return { type: 'polyline', shape: buildPoly(desc.points, { color, strokeWidth }, false) };
+    case 'polygon':
+      return { type: 'polygon', shape: buildPoly(desc.points, { color, strokeWidth }, true) };
     case 'arrow':
       return { type: 'arrow', shape: buildArrowPath(desc.a, desc.b, { color, strokeWidth }) };
     case 'circle':

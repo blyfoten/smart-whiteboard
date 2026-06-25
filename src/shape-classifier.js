@@ -299,6 +299,52 @@ function detectPolyline(pts, bb) {
   return { type: 'polyline', points: snapPolyline(v) };
 }
 
+// A closed stroke that isn't a rectangle or ellipse → a clean polygon (a
+// triangle, diamond, pentagon, notched/L-shaped outline …), or null. Same
+// straighten-and-merge approach as the open case, but cyclic and WITHOUT the
+// same-direction rejection (a convex polygon legitimately turns one way) — smooth
+// closed curves are kept out by the ellipse fit (tried first) and curve guard.
+function detectPolygon(pts, bb) {
+  const diag = Math.hypot(bb.w, bb.h);
+  const eps = Math.max(6, 0.04 * diag);
+  let idx = rdpIndices(pts, eps);
+  // Closed loop: the last vertex is the (near-duplicate) start — drop it.
+  if (idx.length >= 2 && dist(pts[idx[0]], pts[idx[idx.length - 1]]) < 0.25 * Math.max(bb.w, bb.h)) {
+    idx = idx.slice(0, -1);
+  }
+  if (idx.length < 3) return null;
+
+  // Merge out shallow (non-corner) vertices, cyclically.
+  const TURN = (33 * Math.PI) / 180;
+  const turnAt = (k) => {
+    const a = pts[idx[(k - 1 + idx.length) % idx.length]];
+    const b = pts[idx[k]];
+    const c = pts[idx[(k + 1) % idx.length]];
+    return angleTurn(b.x - a.x, b.y - a.y, c.x - b.x, c.y - b.y);
+  };
+  let changed = true;
+  while (changed && idx.length > 3) {
+    changed = false;
+    for (let k = 0; k < idx.length; k++) {
+      if (turnAt(k) < TURN) { idx.splice(k, 1); changed = true; break; }
+    }
+  }
+  if (idx.length < 3 || idx.length > 10) return null;
+
+  const v = idx.map((i) => pts[i]);
+  const minSeg = Math.max(MIN_SIZE * 0.6, 0.05 * diag);
+  for (let k = 0; k < v.length; k++) {
+    if (dist(v[k], v[(k + 1) % v.length]) < minSeg) return null;
+  }
+  // Curve guard: each (non-closing) segment's original sub-stroke must be ~straight.
+  for (let k = 1; k < idx.length; k++) {
+    const seg = pts.slice(idx[k - 1], idx[k] + 1);
+    const segLen = dist(pts[idx[k - 1]], pts[idx[k]]);
+    if (maxDeviationFromChord(seg, pts[idx[k - 1]], pts[idx[k]]) > 0.14 * segLen + 4) return null;
+  }
+  return { type: 'polygon', points: v.map((p) => ({ x: p.x, y: p.y })) };
+}
+
 // Fraction of points that stray well into the interior, away from the bounding
 // box outline. A real rectangle hugs its bbox (≈0); a heart, triangle or
 // staircase dips inside, so a sizable fraction strays. Guards rect detection
@@ -347,7 +393,8 @@ function detectArrow(pts) {
 
 // classifyStroke(points) -> descriptor | null
 //   { type: 'line',     a, b }
-//   { type: 'polyline', points: [{x,y}, ...] }
+//   { type: 'polyline', points: [{x,y}, ...] }   (open)
+//   { type: 'polygon',  points: [{x,y}, ...] }   (closed)
 //   { type: 'arrow',    a, b }
 //   { type: 'circle' | 'ellipse', cx, cy, rx, ry }
 //   { type: 'rect',     x, y, w, h }
@@ -393,6 +440,11 @@ export function classifyStroke(pts) {
       cx: ell.cx, cy: ell.cy, rx: ell.rx, ry: ell.ry,
     };
   }
+
+  // Not a rectangle or ellipse — try a clean closed polygon (triangle, diamond,
+  // notched outline, …) before giving up and leaving it as ink.
+  const polygon = detectPolygon(pts, bb);
+  if (polygon) return polygon;
 
   return null;
 }
