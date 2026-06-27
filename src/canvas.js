@@ -1,6 +1,6 @@
 // src/canvas.js — canvas init, resize, bounding box, crop, pinch-zoom, undo
 
-import { Canvas, PencilBrush, StaticCanvas, Text, Point } from 'fabric';
+import { Canvas, PencilBrush, StaticCanvas, Point } from 'fabric';
 import { undo as historyUndo, suspend as historySuspend, pushComposite } from './history.js';
 
 let canvasInstance = null;
@@ -288,15 +288,3 @@ export function clearCanvas(canvas) {
   }
 }
 
-export function addReadyIndicator(canvas) {
-  const testText = new Text('Canvas Ready', {
-    left: 50,
-    top: 20,
-    fill: 'green',
-    fontSize: 16,
-    selectable: false,
-    evented: false,
-  });
-  canvas.add(testText);
-  canvas.renderAll();
-}

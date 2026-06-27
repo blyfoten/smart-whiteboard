@@ -67,22 +67,26 @@ export function setupCanvasEventListeners() {
   const canvas = getCanvas();
   if (!canvas) return;
 
+  // Double-click to drop a blank text box ready for typing (handwriting font).
   canvas.on('mouse:dblclick', (options) => {
     const pointer = canvas.getPointer(options.e);
-    const text = new IText('Write equation here', {
+    const text = new IText('', {
       left: pointer.x,
       top: pointer.y,
-      fill: 'red',
-      fontSize: 24,
+      fill: 'black',
+      fontSize: 28,
       backgroundColor: 'transparent',
       selectable: true,
       editable: true,
       fontFamily: 'Caveat, cursive',
     });
+    // Don't leave an empty text box behind if nothing was typed.
+    text.on('editing:exited', () => {
+      if (!text.text || !text.text.trim()) canvas.remove(text);
+    });
     canvas.add(text);
     canvas.setActiveObject(text);
     text.enterEditing();
-    text.selectAll();
   });
 }
 

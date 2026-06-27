@@ -1,6 +1,6 @@
 // src/index.js — thin orchestrator
 
-import { getCanvas, resizeCanvas, addReadyIndicator } from './canvas.js';
+import { getCanvas, resizeCanvas } from './canvas.js';
 import { initializeSpeechRecognition } from './speech.js';
 import { initializeModelSelectionUI, setupCanvasEventListeners, initializeEventListeners } from './ui.js';
 import { initModes } from './modes.js';
@@ -35,8 +35,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (canvas) {
       resizeCanvas(canvas);
       window.addEventListener('resize', () => resizeCanvas(canvas));
-      addReadyIndicator(canvas);
-      // Start recording undo history after the ready indicator so it isn't undoable.
       initHistory(canvas);
       setupCanvasEventListeners();
       initModes(canvas);
