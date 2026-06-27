@@ -4,7 +4,7 @@
 // several apply), while a plain expression just offers Plot and Copy.
 
 import { getCanvas } from './canvas.js';
-import { drawGraph, solveToBoard } from './api.js';
+import { drawGraph, solveToBoard, parseTypedEquation } from './api.js';
 import { getCurrentModel } from './ui.js';
 
 let menuEl = null;
@@ -95,6 +95,43 @@ export function hideEquationMenu() {
     menuEl.remove();
     menuEl = null;
   }
+}
+
+// The equation data behind a selected object: stored on extracted/typed
+// equations, or parsed live from a text object that looks like an equation.
+function equationDataFor(obj) {
+  if (!obj) return null;
+  if (obj._equationData) return obj._equationData;
+  if ((obj.type === 'i-text' || obj.type === 'text') &&
+      typeof obj.text === 'string' && obj.text.includes('=')) {
+    return parseTypedEquation(obj.text);
+  }
+  return null;
+}
+
+// Show the menu whenever a single equation object is selected; hide otherwise.
+function onSelectionChanged() {
+  const canvas = getCanvas();
+  if (!canvas) return;
+  const active = canvas.getActiveObject();
+  if (!active || active.type === 'activeselection') {
+    if (active && active.type === 'activeselection') hideEquationMenu();
+    return;
+  }
+  const data = equationDataFor(active);
+  if (data) {
+    window.extractedEquationData = data; // Plot/Solve/Steps act on the selected one
+    showEquationMenu(active, data);
+  } else {
+    hideEquationMenu();
+  }
+}
+
+// Wire the menu to selection: selecting an equation (in Select mode) shows it.
+export function initEquationSelection(canvas) {
+  if (!canvas) return;
+  canvas.on('selection:created', onSelectionChanged);
+  canvas.on('selection:updated', onSelectionChanged);
 }
 
 // showEquationMenu(targetObj, data): pop the action menu next to targetObj.

@@ -290,6 +290,7 @@ export function analyzeText(textObj) {
     return null;
   }
   textObj._isExtracted = true;
+  textObj._equationData = parsed;
   window.extractedEquationData = parsed;
   appendOutput(`<b>Equation:</b> ${parsed.dependentVariable} = ${parsed.equation}`);
   canvas.setActiveObject(textObj);
@@ -365,6 +366,7 @@ async function runExtraction(canvas, inkObjects, model) {
     }
     eqText.set({ top: inkBox.minY + Math.max(0, (boxHeight - eqText.height) / 2) });
     eqText._isExtracted = true;
+    eqText._equationData = { equation, dependentVariable, scope, ranges };
 
     // Replace the handwriting in place as ONE undo step that restores the ink.
     historySuspend(() => {

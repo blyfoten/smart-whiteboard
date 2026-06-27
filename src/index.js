@@ -6,6 +6,7 @@ import { initializeModelSelectionUI, setupCanvasEventListeners, initializeEventL
 import { initModes } from './modes.js';
 import { initOutputPanel } from './output.js';
 import { initVoice } from './voice.js';
+import { initEquationSelection } from './equation-menu.js';
 import { initHistory } from './history.js';
 import { initStatePersistence } from './state.js';
 import { initBoards } from './boards.js';
@@ -38,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
       initHistory(canvas);
       setupCanvasEventListeners();
       initModes(canvas);
+      initEquationSelection(canvas); // selecting an equation shows the action menu
 
       // Web fonts load async and Fabric renders text to the canvas, so re-render
       // once Caveat is available (otherwise the first text uses a fallback font).

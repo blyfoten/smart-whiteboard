@@ -2,7 +2,7 @@
 
 import { getCanvas, undoLast, saveScreenshot, clearCanvas } from './canvas.js';
 import { IText } from 'fabric';
-import { solveEquationFromText, extractEquation, analyzeRegionInk, analyzeText, drawGraph } from './api.js';
+import { solveEquationFromText, extractEquation, analyzeRegionInk, analyzeText, parseTypedEquation, drawGraph } from './api.js';
 import { redrawLastGraph } from './graph.js';
 import { startRegionSelect, inkInRegion } from './region-select.js';
 import { toggleRecognition } from './speech.js';
@@ -80,12 +80,13 @@ export function setupCanvasEventListeners() {
       editable: true,
       fontFamily: 'Caveat, cursive',
     });
-    // Drop it if empty; if it's an equation, open the contextual menu.
+    // Drop it if empty; if it's an equation, tag it so selecting it shows the
+    // contextual menu (the menu is driven by selection, not edit-exit).
     text.on('editing:exited', () => {
       if (!text.text || !text.text.trim()) {
         canvas.remove(text);
       } else if (text.text.includes('=')) {
-        analyzeText(text);
+        text._equationData = parseTypedEquation(text.text);
       }
     });
     canvas.add(text);

@@ -18,7 +18,7 @@ const CURRENT_KEY = 'sw_current_board';
 const DATA_PREFIX = 'sw_board_';
 
 // Custom object properties to persist beyond Fabric's defaults.
-const EXTRA_PROPS = ['id', '_isShape', '_isGraph', '_isExtracted', '_isSteps', '_aiId', '_anchors'];
+const EXTRA_PROPS = ['id', '_isShape', '_isGraph', '_isExtracted', '_isSteps', '_aiId', '_anchors', '_equationData'];
 
 let _timer = null;
 let _suspend = false;
