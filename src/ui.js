@@ -5,6 +5,7 @@ import { IText } from 'fabric';
 import { solveEquationFromText, extractEquation, analyzeRegionInk, analyzeText, parseTypedEquation, drawGraph } from './api.js';
 import { redrawLastGraph } from './graph.js';
 import { startRegionSelect, inkInRegion } from './region-select.js';
+import { getDrawColor } from './draw-settings.js';
 import { toggleRecognition } from './speech.js';
 
 let currentModel = 'math';
@@ -73,7 +74,7 @@ export function setupCanvasEventListeners() {
     const text = new IText('', {
       left: pointer.x,
       top: pointer.y,
-      fill: 'black',
+      fill: getDrawColor(),
       fontSize: 28,
       backgroundColor: 'transparent',
       selectable: true,

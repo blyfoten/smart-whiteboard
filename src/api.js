@@ -7,6 +7,7 @@ import { renderGraph } from './graph.js';
 import { appendToOutput } from './output.js';
 import { showEquationMenu, hideEquationMenu } from './equation-menu.js';
 import { suspend as historySuspend, pushComposite } from './history.js';
+import { getDrawColor } from './draw-settings.js';
 
 function appendOutput(html, isError) {
   appendToOutput(html, isError);
@@ -138,7 +139,7 @@ function makeBoardBlock(canvas, anchor, initial) {
     width: Math.max(320, (anchor.width || 300) * scaleX),
     fontSize,
     fontFamily: 'Caveat, cursive',
-    fill: '#1e40af',
+    fill: getDrawColor(),
     selectable: true,
     evented: true,
     editable: false,
@@ -172,7 +173,7 @@ export async function solveToBoard(instruction, model, anchor, heading) {
     const text = ok ? cleanForBoard(data.result) : `Error: ${data.message || 'solve failed'}`;
 
     if (block) {
-      block.set({ text, fill: ok ? '#1e40af' : '#b91c1c' });
+      block.set({ text, fill: ok ? getDrawColor() : '#b91c1c' });
       block.initDimensions();
       block.setCoords();
       canvas.requestRenderAll();
@@ -352,7 +353,7 @@ async function runExtraction(canvas, inkObjects, model) {
     const eqText = new IText(displayText, {
       left: inkBox.minX,
       top: inkBox.minY,
-      fill: 'green',
+      fill: getDrawColor(),
       fontSize,
       fontFamily: 'Caveat, cursive',
       selectable: true,
