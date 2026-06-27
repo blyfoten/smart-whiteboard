@@ -13,7 +13,7 @@ import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
 import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
 import { deleteActiveSelection } from './equation-menu.js';
 import { getDrawColor, computedShapeFill, getCornerRadius } from './draw-settings.js';
-import { toggleSubToolbar, hideSubToolbar } from './draw-toolbar.js';
+import { toggleSubToolbar, showSubToolbar, isSubToolbarOpen } from './draw-toolbar.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
@@ -221,14 +221,16 @@ export function initModes(canvas) {
   if (!canvas) return;
   _canvas = canvas;
 
-  // Clicking the already-active Draw/Shapes button toggles its options bar;
-  // clicking a different mode switches and closes the bar.
+  // Clicking the already-active mode button toggles its options bar; switching
+  // modes keeps the bar open (if it was) and re-renders it for the new mode.
   const onModeButton = (mode) => {
-    if (_mode === mode && (mode === 'draw' || mode === 'shapes')) {
+    const wasOpen = isSubToolbarOpen();
+    const sameMode = _mode === mode;
+    setMode(mode);
+    if (sameMode) {
       toggleSubToolbar(mode);
-    } else {
-      setMode(mode);
-      hideSubToolbar();
+    } else if (wasOpen) {
+      showSubToolbar(mode);
     }
   };
   const drawBtn = document.getElementById('mode-draw');

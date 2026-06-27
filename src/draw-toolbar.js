@@ -97,19 +97,24 @@ export function isSubToolbarOpen() {
   return !!bar && !bar.classList.contains('hidden');
 }
 
-// Toggle the bar for a mode. Returns true if it ended up open.
-export function toggleSubToolbar(mode) {
+// Open the bar (or re-render it for `mode` if already open).
+export function showSubToolbar(mode) {
   const bar = document.getElementById('sub-toolbar');
-  if (!bar) return false;
-  if (isSubToolbarOpen() && _mode === mode) {
-    hideSubToolbar();
-    return false;
-  }
+  if (!bar) return;
   _mode = mode;
   render(mode);
   bar.classList.remove('hidden');
   const container = document.getElementById('container');
   if (container) container.classList.add('subbar-open');
+}
+
+// Toggle the bar for a mode. Returns true if it ended up open.
+export function toggleSubToolbar(mode) {
+  if (isSubToolbarOpen() && _mode === mode) {
+    hideSubToolbar();
+    return false;
+  }
+  showSubToolbar(mode);
   return true;
 }
 
