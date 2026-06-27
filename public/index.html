@@ -154,6 +154,36 @@
     #whiteboard {
       touch-action: none;
     }
+    /* Contextual sub-toolbar */
+    #sub-toolbar {
+      position: absolute;
+      top: 44px;
+      left: 0; right: 0;
+      z-index: 70;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 14px;
+      padding: 6px 12px;
+      background: rgba(255,255,255,0.98);
+      border-bottom: 1px solid #ddd;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    #sub-toolbar.hidden { display: none; }
+    .sub-group { display: flex; align-items: center; gap: 6px; }
+    .sub-label { font-size: 12px; color: #666; }
+    .swatch {
+      width: 22px; height: 22px; padding: 0; border-radius: 50%;
+      border: 2px solid #fff; box-shadow: 0 0 0 1px #ccc; cursor: pointer;
+    }
+    .swatch.active { box-shadow: 0 0 0 2px #4a90d9; }
+    .sub-picker { width: 28px; height: 26px; padding: 0; border: 1px solid #ccc; border-radius: 5px; background: none; cursor: pointer; }
+    .sub-chip { font-size: 12px; padding: 3px 8px; border: 1px solid #ccc; border-radius: 5px; background: #f5f5f5; cursor: pointer; }
+    .sub-chip.active { background: #4a90d9; color: #fff; border-color: #3a7bc8; }
+    .sub-range { width: 80px; }
+    /* Push the boards panel down while the sub-toolbar is open. */
+    #container.subbar-open #boards-panel { top: 90px; }
+
     /* Boards panel — collapsible, docked left */
     #boards-panel {
       position: absolute;
@@ -353,6 +383,9 @@
       </div>
     </div>
     
+    <!-- Contextual sub-toolbar (color / shape options), below the top bar -->
+    <div id="sub-toolbar" class="hidden"></div>
+
     <!-- Boards panel (left, collapsible) -->
     <div id="boards-panel">
       <div class="boards-header">

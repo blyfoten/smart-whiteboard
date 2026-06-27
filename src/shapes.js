@@ -16,7 +16,7 @@ function buildPoly(points, opts, closed) {
   const poly = new Ctor(points, {
     stroke: opts.color,
     strokeWidth: opts.strokeWidth,
-    fill: '',
+    fill: opts.fill || '',
     strokeLineJoin: 'round',
     strokeLineCap: 'round',
     objectCaching: false,
@@ -42,25 +42,28 @@ function buildArrowPath(a, b, opts) {
   return new Path(d, { stroke: opts.color, strokeWidth: opts.strokeWidth, fill: '' });
 }
 
-// recognizeStroke(points, { strokeWidth, color }) -> { shape, type } | null
+// recognizeStroke(points, { strokeWidth, color, fill, cornerRadius }) -> { shape, type } | null
 export function recognizeStroke(pts, opts = {}) {
   const desc = classifyStroke(pts);
   if (!desc) return null;
 
   const strokeWidth = opts.strokeWidth || 5;
   const color = opts.color || 'black';
-  const common = { stroke: color, strokeWidth, fill: 'transparent' };
+  const fill = opts.fill || '';              // '' = transparent
+  const radius = Math.max(0, opts.cornerRadius || 0);
+  const common = { stroke: color, strokeWidth, fill };
 
   switch (desc.type) {
     case 'line':
+      // Lines/arrows are never filled.
       return {
         type: 'line',
-        shape: buildPoly([{ x: desc.a.x, y: desc.a.y }, { x: desc.b.x, y: desc.b.y }], { color, strokeWidth }, false),
+        shape: buildPoly([{ x: desc.a.x, y: desc.a.y }, { x: desc.b.x, y: desc.b.y }], { color, strokeWidth, fill: '' }, false),
       };
     case 'polyline':
-      return { type: 'polyline', shape: buildPoly(desc.points, { color, strokeWidth }, false) };
+      return { type: 'polyline', shape: buildPoly(desc.points, { color, strokeWidth, fill: '' }, false) };
     case 'polygon':
-      return { type: 'polygon', shape: buildPoly(desc.points, { color, strokeWidth }, true) };
+      return { type: 'polygon', shape: buildPoly(desc.points, { color, strokeWidth, fill }, true) };
     case 'arrow':
       return { type: 'arrow', shape: buildArrowPath(desc.a, desc.b, { color, strokeWidth }) };
     case 'circle':
@@ -78,7 +81,7 @@ export function recognizeStroke(pts, opts = {}) {
     case 'rect':
       return {
         type: 'rect',
-        shape: new Rect({ left: desc.x, top: desc.y, width: desc.w, height: desc.h, ...common }),
+        shape: new Rect({ left: desc.x, top: desc.y, width: desc.w, height: desc.h, rx: radius, ry: radius, ...common }),
       };
     default:
       return null;

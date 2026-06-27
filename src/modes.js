@@ -12,6 +12,8 @@ import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.j
 import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
 import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
 import { deleteActiveSelection } from './equation-menu.js';
+import { getDrawColor, computedShapeFill, getCornerRadius } from './draw-settings.js';
+import { toggleSubToolbar, hideSubToolbar } from './draw-toolbar.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
@@ -160,7 +162,9 @@ function _onPathCreated(e) {
   const pts = pathToPoints(path);
   const result = recognizeStroke(pts, {
     strokeWidth: path.strokeWidth || 5,
-    color: typeof path.stroke === 'string' ? path.stroke : 'black',
+    color: getDrawColor(),
+    fill: computedShapeFill(),
+    cornerRadius: getCornerRadius(),
   });
   if (!result) return;
 
@@ -217,12 +221,22 @@ export function initModes(canvas) {
   if (!canvas) return;
   _canvas = canvas;
 
+  // Clicking the already-active Draw/Shapes button toggles its options bar;
+  // clicking a different mode switches and closes the bar.
+  const onModeButton = (mode) => {
+    if (_mode === mode && (mode === 'draw' || mode === 'shapes')) {
+      toggleSubToolbar(mode);
+    } else {
+      setMode(mode);
+      hideSubToolbar();
+    }
+  };
   const drawBtn = document.getElementById('mode-draw');
   const selectBtn = document.getElementById('mode-select');
   const shapesBtn = document.getElementById('mode-shapes');
-  if (drawBtn) drawBtn.addEventListener('click', () => setMode('draw'));
-  if (selectBtn) selectBtn.addEventListener('click', () => setMode('select'));
-  if (shapesBtn) shapesBtn.addEventListener('click', () => setMode('shapes'));
+  if (drawBtn) drawBtn.addEventListener('click', () => onModeButton('draw'));
+  if (selectBtn) selectBtn.addEventListener('click', () => onModeButton('select'));
+  if (shapesBtn) shapesBtn.addEventListener('click', () => onModeButton('shapes'));
 
   const smartSelect = document.getElementById('smart-shapes-select');
   if (smartSelect) {

@@ -15,12 +15,12 @@ const PREF_SELECTS = [
   'graph-grid-select',
 ];
 
-function setCookie(name, value, days = 365) {
+export function setCookie(name, value, days = 365) {
   const expires = new Date(Date.now() + days * 864e5).toUTCString();
   document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
 }
 
-function getCookie(name) {
+export function getCookie(name) {
   const escaped = name.replace(/[.$?*|{}()[\]\\/+^]/g, '\\$&');
   const m = document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]*)`));
   return m ? decodeURIComponent(m[1]) : null;
