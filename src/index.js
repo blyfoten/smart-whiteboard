@@ -10,6 +10,7 @@ import { initEquationSelection } from './equation-menu.js';
 import { initHistory } from './history.js';
 import { initStatePersistence } from './state.js';
 import { initDrawSettings } from './draw-settings.js';
+import { initMoveSnap } from './snap-move.js';
 import { initBoards } from './boards.js';
 import { initBoardsPanel } from './boards-panel.js';
 import { solveEquation } from './api.js';
@@ -41,6 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setupCanvasEventListeners();
       initModes(canvas);
       initDrawSettings(); // restore pen/shape colour, fill, corner radius
+      initMoveSnap(canvas); // align-to-objects snapping while moving (toggleable)
       initEquationSelection(canvas); // selecting an equation shows the action menu
 
       // Web fonts load async and Fabric renders text to the canvas, so re-render

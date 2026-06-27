@@ -14,6 +14,8 @@ const state = {
   fill: 'none',         // shape fill: 'none' or a hex colour
   fillOpacity: 0.3,
   cornerRadius: 0,      // rounded-rectangle radius (px)
+  snapMove: 'off',      // align a moved selection to other objects ('on'/'off')
+  snapNodeOrtho: 'off', // snap a dragged node so a near-ortho segment goes H/V
 };
 
 function save() {
@@ -31,6 +33,12 @@ export function setFillOpacity(v) { state.fillOpacity = Math.max(0, Math.min(1, 
 
 export function getCornerRadius() { return state.cornerRadius; }
 export function setCornerRadius(v) { state.cornerRadius = Math.max(0, v); save(); }
+
+export function getSnapMove() { return state.snapMove; }
+export function setSnapMove(v) { state.snapMove = v; save(); }
+
+export function getSnapNodeOrtho() { return state.snapNodeOrtho; }
+export function setSnapNodeOrtho(v) { state.snapNodeOrtho = v; save(); }
 
 export function applyBrush() {
   const c = getCanvas();

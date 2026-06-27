@@ -9,6 +9,8 @@ import {
   getShapeFill, setShapeFill,
   getFillOpacity, setFillOpacity,
   getCornerRadius, setCornerRadius,
+  getSnapMove, setSnapMove,
+  getSnapNodeOrtho, setSnapNodeOrtho,
 } from './draw-settings.js';
 
 const SWATCHES = [
@@ -84,10 +86,30 @@ function shapeRow() {
   return group;
 }
 
+// A small on/off toggle chip bound to a getter/setter ('on'/'off').
+function toggleChip(label, title, get, set) {
+  const chip = el('button', 'sub-chip' + (get() === 'on' ? ' active' : ''), label);
+  chip.title = title;
+  chip.addEventListener('click', () => { set(get() === 'on' ? 'off' : 'on'); render(_mode); });
+  return chip;
+}
+
+function selectRow() {
+  const group = el('div', 'sub-group');
+  group.appendChild(el('span', 'sub-label', 'Snap'));
+  group.appendChild(toggleChip('Move align', 'Align a moved selection to other objects', getSnapMove, setSnapMove));
+  group.appendChild(toggleChip('⟂ Nodes', 'Snap a dragged node so a near-straight segment becomes horizontal/vertical', getSnapNodeOrtho, setSnapNodeOrtho));
+  return group;
+}
+
 function render(mode) {
   const bar = document.getElementById('sub-toolbar');
   if (!bar) return;
   bar.innerHTML = '';
+  if (mode === 'select') {
+    bar.appendChild(selectRow());
+    return;
+  }
   bar.appendChild(colorRow());
   if (mode === 'shapes') bar.appendChild(shapeRow());
 }

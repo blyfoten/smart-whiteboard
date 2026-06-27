@@ -88,7 +88,9 @@ function snapshot(canvas) {
   serializeAnchors(canvas);
   const data = canvas.toObject(EXTRA_PROPS);
   // Defensive: make sure custom props are present even if toObject dropped them.
-  const live = canvas.getObjects();
+  // Filter to exported objects so indices line up with data.objects (transient
+  // guide lines are excludeFromExport).
+  const live = canvas.getObjects().filter((o) => !o.excludeFromExport);
   (data.objects || []).forEach((so, i) => {
     const o = live[i];
     if (!o) return;

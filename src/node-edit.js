@@ -8,8 +8,10 @@
 // fixed while one node moves).
 
 import { Control, Point, util } from 'fabric';
+import { getSnapNodeOrtho } from './draw-settings.js';
 
 const { invertTransform, multiplyTransformMatrices } = util;
+const ORTHO_TOL = Math.tan((8 * Math.PI) / 180); // ~8° → snap segment to H/V
 
 // Where to draw the handle for point `control.pointIndex`, in screen space.
 function pointPositionHandler(dim, finalMatrix, obj, control) {
@@ -22,18 +24,43 @@ function pointPositionHandler(dim, finalMatrix, obj, control) {
   );
 }
 
+// The points adjacent to `i` (cyclic for a polygon), used for ortho snapping.
+function neighbors(obj, i) {
+  const n = obj.points.length;
+  const out = [];
+  if (i > 0) out.push(obj.points[i - 1]);
+  else if (obj.type === 'polygon') out.push(obj.points[n - 1]);
+  if (i < n - 1) out.push(obj.points[i + 1]);
+  else if (obj.type === 'polygon') out.push(obj.points[0]);
+  return out;
+}
+
+// Snap a node so a connected segment that's within ~8° of an axis becomes
+// exactly horizontal/vertical (aligning to that neighbour's x or y).
+function orthoSnap(obj, i, px, py) {
+  let sx = false, sy = false;
+  for (const nb of neighbors(obj, i)) {
+    const dx = px - nb.x;
+    const dy = py - nb.y;
+    if (!sy && Math.abs(dy) <= Math.abs(dx) * ORTHO_TOL) { py = nb.y; sy = true; }
+    else if (!sx && Math.abs(dx) <= Math.abs(dy) * ORTHO_TOL) { px = nb.x; sx = true; }
+  }
+  return { px, py };
+}
+
 // Drag handler for a specific point index (captured by closure, so we don't
-// depend on Fabric's internal "current corner" bookkeeping).
-function makeActionHandler(pointIndex) {
+// depend on Fabric's internal "current corner" bookkeeping). `allowOrtho` is set
+// for user drags (not for programmatic anchor-follow moves).
+function makeActionHandler(pointIndex, allowOrtho) {
   return function actionHandler(eventData, transform, x, y) {
     const obj = transform.target;
     const local = new Point(x, y).transform(invertTransform(obj.calcTransformMatrix()));
     const base = obj._getNonTransformedDimensions();
     const size = obj._getTransformedDimensions();
-    obj.points[pointIndex] = new Point(
-      size.x ? (local.x * base.x) / size.x + obj.pathOffset.x : obj.pathOffset.x,
-      size.y ? (local.y * base.y) / size.y + obj.pathOffset.y : obj.pathOffset.y
-    );
+    let px = size.x ? (local.x * base.x) / size.x + obj.pathOffset.x : obj.pathOffset.x;
+    let py = size.y ? (local.y * base.y) / size.y + obj.pathOffset.y : obj.pathOffset.y;
+    if (allowOrtho && getSnapNodeOrtho() === 'on') ({ px, py } = orthoSnap(obj, pointIndex, px, py));
+    obj.points[pointIndex] = new Point(px, py);
     return true;
   };
 }
@@ -101,7 +128,7 @@ export function enablePointEditing(obj) {
       actionName: 'editNode',
       cursorStyle: 'crosshair',
       positionHandler: pointPositionHandler,
-      actionHandler: anchorWrapper(anchor, makeActionHandler(i)),
+      actionHandler: anchorWrapper(anchor, makeActionHandler(i, true)),
       render: renderHandle,
     });
   });
