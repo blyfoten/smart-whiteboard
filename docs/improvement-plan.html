@@ -351,8 +351,56 @@
     </li>
   </ol>
 
+  <!-- ============================================================ -->
+  <h2><span class="num">6</span>Sessions &amp; saved state <span class="star">★ new feature</span></h2>
+  <p class="section-lead">
+    The board is ephemeral today — a reload loses everything. Persist progressively: lightweight
+    user state in <strong>cookies</strong> now, the drawing itself next, and eventually real accounts &amp;
+    cloud sync. Each phase stands alone and ships independently.
+  </p>
+
+  <div class="card">
+    <h3>6.1 — User state in cookies <span style="color:var(--green)">✓ first slice</span></h3>
+    <div class="badges"><span class="badge decided">✓ shipped</span><span class="badge p-high">High</span></div>
+    <p class="now">Was: every preference reset to its default on each load.</p>
+    <ul>
+      <li>✅ <code>src/state.js</code>: tiny cookie helpers + an anonymous, persistent <code>sw_uid</code> (sets up future account linking).</li>
+      <li>✅ Settings persist across reloads — AI model, smart-shapes mode, edge snapping, graph gridlines — restored to the controls before the modules read them, re-saved on change (1-year cookies, <code>SameSite=Lax</code>).</li>
+      <li>Cookies are ~4&nbsp;KB, so they hold <em>preferences &amp; identity</em>, not the drawing — that's 6.2.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>6.2 — Autosave the board (local)</h3>
+    <div class="badges"><span class="badge p-high">High</span></div>
+    <ul>
+      <li>Serialize the canvas (<code>toJSON</code> with our custom props — <code>_isShape</code>, <code>_edgeAnchors</code>, node controls) to <strong>localStorage</strong> on a debounced change; restore on load.</li>
+      <li>Re-establish object references after load (edge anchors point at object instances) and re-attach node-editing controls.</li>
+      <li>"New / Restore" affordance; keep the last <em>N</em> autosaves so a clear is recoverable beyond the single undo step.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>6.3 — Named boards &amp; sessions</h3>
+    <div class="badges"><span class="badge p-med">Medium</span></div>
+    <ul>
+      <li>Multiple saved boards keyed by the <code>sw_uid</code>; thumbnails, rename, delete; deep-link a board by id.</li>
+      <li>A board id in the URL so a session can be resumed or shared (read-only first).</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>6.4 — Accounts &amp; cloud sync (Google sign-in)</h3>
+    <div class="badges"><span class="badge open">amber = open question</span><span class="badge p-low">Later</span></div>
+    <ul>
+      <li>Google OAuth sign-in; on first login, claim the anonymous <code>sw_uid</code>'s boards so nothing is lost.</li>
+      <li>Server-side board storage keyed by account; sync across devices. Needs real auth + a datastore (the current rate-limiter/CORS work in §4 is the groundwork).</li>
+      <li class="qbox">Open: self-hosted datastore vs a managed backend? Sharing/collaboration model (the voice mode §2 hints at multi-user)?</li>
+    </ul>
+  </div>
+
   <footer>
-    Draft v0.5 · edit me at <code>docs/improvement-plan.html</code> · served live at <code>/plan</code><br>
+    Draft v0.20 · edit me at <code>docs/improvement-plan.html</code> · served live at <code>/plan</code><br>
     Sources: OpenAI &amp; Google AI developer docs (Jun 2026), Anthropic model reference.
   </footer>
 

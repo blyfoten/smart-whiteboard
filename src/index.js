@@ -7,6 +7,7 @@ import { initModes } from './modes.js';
 import { initOutputPanel } from './output.js';
 import { initVoice } from './voice.js';
 import { initHistory } from './history.js';
+import { initStatePersistence } from './state.js';
 import { solveEquation } from './api.js';
 
 function handleCommand(command) {
@@ -24,6 +25,9 @@ function handleCommand(command) {
 document.addEventListener('DOMContentLoaded', () => {
   const status = document.getElementById('status');
   try {
+    // Restore saved preferences onto the controls before any module reads them.
+    initStatePersistence();
+
     const canvas = getCanvas();
 
     if (canvas) {
