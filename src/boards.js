@@ -47,7 +47,8 @@ function setCurrentBoardId(id) {
 }
 
 export function listBoards() {
-  return readList().slice().sort((a, b) => b.updatedAt - a.updatedAt);
+  // Stable creation order — switching (which bumps updatedAt) must not reorder.
+  return readList().slice();
 }
 
 export function onBoardsChanged(cb) {
