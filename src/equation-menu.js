@@ -8,6 +8,53 @@ import { drawGraph, solveToBoard, parseTypedEquation } from './api.js';
 import { getCurrentModel } from './ui.js';
 import { suspend as historySuspend, pushComposite } from './history.js';
 
+const TEXT_TYPES = ['i-text', 'text', 'textbox'];
+
+function isTextObject(o) {
+  return !!o && TEXT_TYPES.includes(o.type);
+}
+
+// Scale a text object's font size by `f`, including any per-character superscript
+// styling so exponents grow/shrink proportionally.
+function applyFontScale(obj, f) {
+  obj.set({ fontSize: obj.fontSize * f });
+  if (obj.styles) {
+    Object.values(obj.styles).forEach((line) =>
+      Object.values(line).forEach((ch) => {
+        if (ch.fontSize) ch.fontSize *= f;
+        if (ch.deltaY) ch.deltaY *= f;
+      })
+    );
+  }
+  if (obj.initDimensions) obj.initDimensions();
+  obj.setCoords();
+}
+
+function cloneStyles(o) {
+  return o.styles ? JSON.parse(JSON.stringify(o.styles)) : null;
+}
+
+// Resize the selected text by a factor, undoable, and re-fit the menu.
+function changeFontSize(factor) {
+  const canvas = getCanvas();
+  if (!canvas || !isTextObject(target)) return;
+  const beforeSize = target.fontSize;
+  const beforeStyles = cloneStyles(target);
+  const newSize = Math.max(8, Math.min(400, beforeSize * factor));
+  if (newSize === beforeSize) return;
+  applyFontScale(target, newSize / beforeSize);
+  canvas.requestRenderAll();
+  positionMenu();
+  canvas.fire('object:modified', { target }); // trigger autosave
+  pushComposite(() => {
+    target.set({ fontSize: beforeSize });
+    if (beforeStyles) target.styles = JSON.parse(JSON.stringify(beforeStyles));
+    if (target.initDimensions) target.initDimensions();
+    target.setCoords();
+    canvas.requestRenderAll();
+  });
+}
+
 // Delete the current selection (one or many) as a single undo step.
 export function deleteActiveSelection() {
   const canvas = getCanvas();
@@ -223,6 +270,11 @@ export function showEquationMenu(targetObj, data) {
         makeButton('📝 Steps', `Step-by-step (${methods[0].label})`, () => runSteps(methods[0]))
       );
     }
+  }
+
+  if (isTextObject(target)) {
+    row.appendChild(makeButton('A−', 'Smaller text', () => changeFontSize(1 / 1.15)));
+    row.appendChild(makeButton('A+', 'Larger text', () => changeFontSize(1.15)));
   }
 
   if (info.isFunction || (target && typeof target.text === 'string' && target.text)) {
