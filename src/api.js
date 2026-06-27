@@ -245,6 +245,59 @@ export async function extractEquation() {
   return runExtraction(canvas, inkObjects, model);
 }
 
+// Insert explicit multiplication so a typed expression parses in math.js:
+// 2x → 2*x, 2(x+1) → 2*(x+1), )( → )*(. Leaves function calls (sin(x)) intact.
+function insertImplicitMultiplication(expr) {
+  return String(expr)
+    .replace(/(\d)\s*([a-zA-Z(])/g, '$1*$2')
+    .replace(/(\))\s*([a-zA-Z0-9(])/g, '$1*$2');
+}
+
+const KNOWN_FNS = ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'log', 'ln', 'exp', 'sqrt', 'abs', 'pi', 'e'];
+
+// Parse a typed equation ("y = 2x + 3") into the same shape the vision extractor
+// returns, so keyboard-entered equations can be plotted/solved. null if it isn't
+// an equation.
+export function parseTypedEquation(text) {
+  if (!text) return null;
+  const s = String(text).trim().replace(/\s+/g, '');
+  if (!s.includes('=')) return null;
+  const [lhs, rhs] = s.split('=');
+  if (!rhs) return null;
+  const dependentVariable = /^[a-zA-Z]\w*$/.test(lhs) ? lhs : 'y';
+  const expression = insertImplicitMultiplication(rhs);
+  const vars = new Set(
+    (expression.match(/[a-zA-Z]+/g) || []).filter((v) => !KNOWN_FNS.includes(v.toLowerCase()))
+  );
+  vars.delete(dependentVariable);
+  const indep = [...vars][0] || 'x';
+  return {
+    equation: expression,
+    dependentVariable,
+    scope: { [indep]: 0 },
+    ranges: { [indep]: [-10, 10] },
+  };
+}
+
+// Treat a typed text object as an equation: parse it and open the same
+// content-aware menu (Plot / Solve / Steps) used for handwriting.
+export function analyzeText(textObj) {
+  const canvas = getCanvas();
+  if (!canvas || !textObj) return null;
+  const parsed = parseTypedEquation(textObj.text);
+  if (!parsed) {
+    appendOutput('<b>Not an equation</b> — type something like <code>y = 2x + 3</code>.', true);
+    return null;
+  }
+  textObj._isExtracted = true;
+  window.extractedEquationData = parsed;
+  appendOutput(`<b>Equation:</b> ${parsed.dependentVariable} = ${parsed.equation}`);
+  canvas.setActiveObject(textObj);
+  canvas.requestRenderAll();
+  showEquationMenu(textObj, parsed);
+  return parsed;
+}
+
 // Analyze just the ink within a user-selected region (lasso/marquee), ignoring
 // the rest of a cluttered board.
 export async function analyzeRegionInk(inkObjects) {

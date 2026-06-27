@@ -2,7 +2,7 @@
 
 import { getCanvas, undoLast, saveScreenshot, clearCanvas } from './canvas.js';
 import { IText } from 'fabric';
-import { solveEquationFromText, extractEquation, analyzeRegionInk, drawGraph } from './api.js';
+import { solveEquationFromText, extractEquation, analyzeRegionInk, analyzeText, drawGraph } from './api.js';
 import { redrawLastGraph } from './graph.js';
 import { startRegionSelect, inkInRegion } from './region-select.js';
 import { toggleRecognition } from './speech.js';
@@ -80,9 +80,13 @@ export function setupCanvasEventListeners() {
       editable: true,
       fontFamily: 'Caveat, cursive',
     });
-    // Don't leave an empty text box behind if nothing was typed.
+    // Drop it if empty; if it's an equation, open the contextual menu.
     text.on('editing:exited', () => {
-      if (!text.text || !text.text.trim()) canvas.remove(text);
+      if (!text.text || !text.text.trim()) {
+        canvas.remove(text);
+      } else if (text.text.includes('=')) {
+        analyzeText(text);
+      }
     });
     canvas.add(text);
     canvas.setActiveObject(text);
@@ -128,7 +132,17 @@ export function initializeEventListeners() {
 
   const extractEqBtn = document.getElementById('extract-eq-btn');
   if (extractEqBtn) {
-    extractEqBtn.addEventListener('click', extractEquation);
+    extractEqBtn.addEventListener('click', () => {
+      // If a typed text equation is selected, analyze that; else read handwriting.
+      const canvas = getCanvas();
+      const active = canvas && canvas.getActiveObject();
+      if (active && (active.type === 'i-text' || active.type === 'text') &&
+          typeof active.text === 'string' && active.text.includes('=')) {
+        analyzeText(active);
+      } else {
+        extractEquation();
+      }
+    });
   }
 
   const regionAnalyzeBtn = document.getElementById('region-analyze-btn');

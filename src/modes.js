@@ -10,7 +10,7 @@
 import { pathToPoints, recognizeStroke } from './shapes.js';
 import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
 import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
-import { suspend as historySuspend, pushComposite, onAfterUndo } from './history.js';
+import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
@@ -140,6 +140,18 @@ function _reanchorNodeAfterDrag(poly, i) {
   _canvas.requestRenderAll();
 }
 
+// A click (no drag) in draw mode leaves a zero-size "dot" path — e.g. the two
+// clicks of a double-click, or clicking away from a text box. Discard those
+// degenerate strokes (drawn marks/decimal points are bigger and kept).
+function _removeStrayDot(e) {
+  const p = e && e.path;
+  if (!p) return false;
+  if (Math.max(p.width || 0, p.height || 0) >= 3) return false;
+  historyPopLast();                          // drop its just-recorded add-entry
+  historySuspend(() => _canvas.remove(p));   // remove without recording
+  return true;
+}
+
 // Swap a freehand path for a recognized primitive, with a brief fade-in.
 function _onPathCreated(e) {
   if (!_shouldBeautify()) return;
@@ -223,7 +235,7 @@ export function initModes(canvas) {
     edgeSnapSelect.addEventListener('change', (ev) => setEdgeSnap(ev.target.value));
   }
 
-  canvas.on('path:created', _onPathCreated);
+  canvas.on('path:created', (e) => { if (!_removeStrayDot(e)) _onPathCreated(e); });
   // After an undo, re-pin anchored nodes (e.g. a restored/relocated target).
   onAfterUndo(() => _reapplyAnchors(null));
   // Sticky anchors: anchored polyline nodes follow their shape as it moves.
