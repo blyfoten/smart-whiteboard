@@ -251,7 +251,11 @@ check('near-vertical line snaps to vertical', () => {
 
 check('smooth open arc → null (not polyline)', () => {
   // A half-circle arc: gentle, continuous bend — must NOT straighten to segments.
-  const pts = ellipsePts(200, 200, 120, 120, 60).slice(0, 31);
+  // Low jitter keeps it an unambiguous curve (all turns one direction).
+  const pts = Array.from({ length: 41 }, (_, i) => {
+    const t = (i / 40) * Math.PI;
+    return { x: jitter(200 + 120 * Math.cos(t), 0.8), y: jitter(200 + 120 * Math.sin(t), 0.8) };
+  });
   assert.equal(classifyStroke(pts), null);
 });
 

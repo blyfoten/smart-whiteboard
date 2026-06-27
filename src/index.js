@@ -8,6 +8,8 @@ import { initOutputPanel } from './output.js';
 import { initVoice } from './voice.js';
 import { initHistory } from './history.js';
 import { initStatePersistence } from './state.js';
+import { initBoards } from './boards.js';
+import { initBoardsPanel } from './boards-panel.js';
 import { solveEquation } from './api.js';
 
 function handleCommand(command) {
@@ -55,6 +57,10 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeEventListeners();
     initOutputPanel();
     initVoice();
+
+    // Boards panel + autosave: render the list, then load the active board.
+    initBoardsPanel();
+    initBoards();
 
     // Expose globals for HTML inline usage
     window.getCanvas = getCanvas;
