@@ -11,6 +11,7 @@ import { pathToPoints, recognizeStroke } from './shapes.js';
 import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
 import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
 import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
+import { deleteActiveSelection } from './equation-menu.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
@@ -271,6 +272,14 @@ export function initModes(canvas) {
       setMode(tempPrevMode);
       tempPrevMode = null;
     }
+  });
+
+  // Delete / Backspace removes the current selection (unless typing).
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Delete' && ev.key !== 'Backspace') return;
+    if (_isTyping() || !_canvas.getActiveObject()) return;
+    ev.preventDefault();
+    deleteActiveSelection();
   });
 
   setMode('draw');

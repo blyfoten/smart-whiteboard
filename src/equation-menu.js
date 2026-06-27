@@ -6,6 +6,20 @@
 import { getCanvas } from './canvas.js';
 import { drawGraph, solveToBoard, parseTypedEquation } from './api.js';
 import { getCurrentModel } from './ui.js';
+import { suspend as historySuspend, pushComposite } from './history.js';
+
+// Delete the current selection (one or many) as a single undo step.
+export function deleteActiveSelection() {
+  const canvas = getCanvas();
+  if (!canvas) return;
+  const objs = canvas.getActiveObjects();
+  if (!objs.length) return;
+  canvas.discardActiveObject();
+  historySuspend(() => objs.forEach((o) => canvas.remove(o)));
+  pushComposite((c) => historySuspend(() => objs.forEach((o) => c.add(o))));
+  hideEquationMenu();
+  canvas.requestRenderAll();
+}
 
 let menuEl = null;
 let target = null;
@@ -109,22 +123,16 @@ function equationDataFor(obj) {
   return null;
 }
 
-// Show the menu whenever a single equation object is selected; hide otherwise.
+// Show the action menu for the current selection: equation actions for an
+// equation, otherwise just a delete affordance. Hidden when nothing is selected.
 function onSelectionChanged() {
   const canvas = getCanvas();
   if (!canvas) return;
   const active = canvas.getActiveObject();
-  if (!active || active.type === 'activeselection') {
-    if (active && active.type === 'activeselection') hideEquationMenu();
-    return;
-  }
-  const data = equationDataFor(active);
-  if (data) {
-    window.extractedEquationData = data; // Plot/Solve/Steps act on the selected one
-    showEquationMenu(active, data);
-  } else {
-    hideEquationMenu();
-  }
+  if (!active) return; // selection:cleared handler hides the menu
+  const data = active.type === 'activeselection' ? null : equationDataFor(active);
+  if (data) window.extractedEquationData = data; // Plot/Solve/Steps act on this one
+  showEquationMenu(active, data);
 }
 
 // Wire the menu to selection: selecting an equation (in Select mode) shows it.
@@ -141,7 +149,10 @@ export function showEquationMenu(targetObj, data) {
   if (!canvas || !targetObj) return;
   target = targetObj;
 
-  const info = analyzeEquation(data);
+  // data may be null for a non-equation selection — then it's just a delete menu.
+  const info = data
+    ? analyzeEquation(data)
+    : { expr: '', indepVar: 'x', dep: '', degree: 0, isFunction: false };
   const methods = info.isFunction ? methodsFor(info.degree, info.indepVar) : [];
 
   menuEl = document.createElement('div');
@@ -176,10 +187,12 @@ export function showEquationMenu(targetObj, data) {
     );
   });
 
-  const label = document.createElement('span');
-  label.className = 'em-label';
-  label.textContent = info.isFunction ? `${info.dep} = ${info.expr}` : 'equation';
-  row.appendChild(label);
+  if (info.isFunction) {
+    const label = document.createElement('span');
+    label.className = 'em-label';
+    label.textContent = `${info.dep} = ${info.expr}`;
+    row.appendChild(label);
+  }
 
   if (info.isFunction && data.ranges && Object.keys(data.ranges).length) {
     row.appendChild(makeButton('📈 Plot', 'Plot this function', () => drawGraph()));
@@ -212,16 +225,17 @@ export function showEquationMenu(targetObj, data) {
     }
   }
 
-  row.appendChild(
-    makeButton(
-      '⧉ Copy',
-      'Copy equation text',
-      () => {
+  if (info.isFunction || (target && typeof target.text === 'string' && target.text)) {
+    row.appendChild(
+      makeButton('⧉ Copy', 'Copy text', () => {
         const text = target && target.text ? target.text : `${info.dep} = ${info.expr}`;
         if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
-      }
-    )
-  );
+      })
+    );
+  }
+
+  const del = makeButton('🗑', 'Delete selection (Del)', deleteActiveSelection, 'em-del');
+  row.appendChild(del);
 
   const close = makeButton('✕', 'Dismiss', hideEquationMenu, 'em-close');
   row.appendChild(close);
