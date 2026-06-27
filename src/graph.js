@@ -87,8 +87,10 @@ function _axesPlugin(depVar) {
 function _getOffscreenCanvas() {
   if (!_offscreenCanvas) {
     _offscreenCanvas = document.createElement('canvas');
-    _offscreenCanvas.width = 500;
-    _offscreenCanvas.height = 350;
+    // Half the previous pixel size → a ~50% smaller graph on the board, while
+    // font sizes and line widths (kept in px) render at the same displayed size.
+    _offscreenCanvas.width = 250;
+    _offscreenCanvas.height = 175;
     _offscreenCanvas.style.display = 'none';
     document.body.appendChild(_offscreenCanvas);
   }
