@@ -97,7 +97,7 @@ function toggleChip(label, title, get, set) {
 function selectRow() {
   const group = el('div', 'sub-group');
   group.appendChild(el('span', 'sub-label', 'Snap'));
-  group.appendChild(toggleChip('Move align', 'Align a moved selection to other objects', getSnapMove, setSnapMove));
+  group.appendChild(toggleChip('Align', 'Align moves & resizes to other objects', getSnapMove, setSnapMove));
   group.appendChild(toggleChip('⟂ Nodes', 'Snap a dragged node so a near-straight segment becomes horizontal/vertical', getSnapNodeOrtho, setSnapNodeOrtho));
   return group;
 }
