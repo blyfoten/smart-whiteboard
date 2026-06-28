@@ -4,7 +4,7 @@
 // several apply), while a plain expression just offers Plot and Copy.
 
 import { getCanvas } from './canvas.js';
-import { drawGraph, solveToBoard, parseTypedEquation } from './api.js';
+import { drawGraph, solveToBoard, parseTypedEquation, replotGraph } from './api.js';
 import { getCurrentModel } from './ui.js';
 import { suspend as historySuspend, pushComposite } from './history.js';
 
@@ -53,6 +53,57 @@ function changeFontSize(factor) {
     target.setCoords();
     canvas.requestRenderAll();
   });
+}
+
+// Scale a graph image up/down (undoable), and re-fit the menu.
+function changeGraphSize(factor) {
+  const canvas = getCanvas();
+  if (!canvas || !target) return;
+  const bx = target.scaleX || 1;
+  const by = target.scaleY || 1;
+  target.set({ scaleX: bx * factor, scaleY: by * factor });
+  target.setCoords();
+  canvas.requestRenderAll();
+  positionMenu();
+  canvas.fire('object:modified', { target });
+  pushComposite(() => {
+    target.set({ scaleX: bx, scaleY: by });
+    target.setCoords();
+    canvas.requestRenderAll();
+  });
+}
+
+function numInput(value, title) {
+  const i = document.createElement('input');
+  i.type = 'number';
+  i.className = 'em-num';
+  i.title = title;
+  if (value != null && Number.isFinite(value)) i.value = value;
+  return i;
+}
+
+// x/y limit fields for a selected graph; changing any re-plots it.
+function graphLimits(graph) {
+  const p = graph._plot || {};
+  const wrap = document.createElement('span');
+  wrap.className = 'em-limits';
+  const xmin = numInput(p.xmin, 'x min');
+  const xmax = numInput(p.xmax, 'x max');
+  const ymin = numInput(p.ymin, 'y min (blank = auto)');
+  const ymax = numInput(p.ymax, 'y max (blank = auto)');
+  const val = (el, dflt) => (el.value === '' ? dflt : Number(el.value));
+  const apply = () => {
+    replotGraph(graph, {
+      xmin: val(xmin, p.xmin),
+      xmax: val(xmax, p.xmax),
+      ymin: ymin.value === '' ? null : Number(ymin.value),
+      ymax: ymax.value === '' ? null : Number(ymax.value),
+    });
+  };
+  [xmin, xmax, ymin, ymax].forEach((el) => el.addEventListener('change', apply));
+  const label = (t) => { const s = document.createElement('span'); s.className = 'em-label'; s.textContent = t; return s; };
+  wrap.append(label('x'), xmin, xmax, label('y'), ymin, ymax);
+  return wrap;
 }
 
 // Delete the current selection (one or many) as a single undo step.
@@ -275,6 +326,12 @@ export function showEquationMenu(targetObj, data) {
   if (isTextObject(target)) {
     row.appendChild(makeButton('A−', 'Smaller text', () => changeFontSize(1 / 1.15)));
     row.appendChild(makeButton('A+', 'Larger text', () => changeFontSize(1.15)));
+  }
+
+  if (target && target._isGraph) {
+    row.appendChild(makeButton('A−', 'Smaller graph', () => changeGraphSize(1 / 1.15)));
+    row.appendChild(makeButton('A+', 'Larger graph', () => changeGraphSize(1.15)));
+    if (target._plot) row.appendChild(graphLimits(target));
   }
 
   if (info.isFunction || (target && typeof target.text === 'string' && target.text)) {

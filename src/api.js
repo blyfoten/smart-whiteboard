@@ -409,13 +409,15 @@ export async function drawGraph() {
     const data = await response.json();
 
     if (data.success) {
-      renderGraph(data.data, dependentVariable);
-      const rangeKey = Object.keys(ranges)[0];
+      const variable = Object.keys(ranges)[0] || 'x';
+      renderGraph(data.data, dependentVariable, {
+        expression: equation, dependentVariable, variable,
+        xmin: ranges[variable][0], xmax: ranges[variable][1], ymin: null, ymax: null,
+      });
       appendOutput(
         `<b>Graph created for:</b> ${dependentVariable} = ${equation}<br>` +
         `<b>Points:</b> ${data.data.length}<br>` +
-        `<b>Range:</b> [${ranges[rangeKey][0]}, ${ranges[rangeKey][1]}]<br>` +
-        '<i>Graph displayed in bottom-right corner</i>'
+        `<b>Range:</b> [${ranges[variable][0]}, ${ranges[variable][1]}]`
       );
     } else {
       appendOutput(`<b>Error generating graph:</b><br>${data.message || 'Unknown error'}`, true);
@@ -423,5 +425,29 @@ export async function drawGraph() {
   } catch (error) {
     console.error('Error:', error);
     appendOutput(`<b>Error:</b><br>${error.message || 'Failed to generate graph'}`, true);
+  }
+}
+
+// Re-plot a selected graph with changed x/y limits (keeps its position & size).
+export async function replotGraph(graphImg, changes) {
+  if (!graphImg || !graphImg._plot) return;
+  const p = { ...graphImg._plot, ...changes };
+  const variable = p.variable || 'x';
+  try {
+    const response = await fetch('/graph', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expression: p.expression,
+        dependentVariable: p.dependentVariable,
+        scope: { [variable]: 0 },
+        ranges: { [variable]: [p.xmin, p.xmax] },
+      }),
+    });
+    const data = await response.json();
+    if (data.success) renderGraph(data.data, p.dependentVariable, p);
+    else appendOutput(`<b>Error re-plotting:</b><br>${data.message || 'Unknown error'}`, true);
+  } catch (e) {
+    appendOutput(`<b>Error:</b><br>${e.message || 'Failed to re-plot'}`, true);
   }
 }

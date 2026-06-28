@@ -104,16 +104,24 @@ function _gridlinesOn() {
 
 // Re-render the most recent graph (e.g. after toggling gridlines in settings).
 export function redrawLastGraph() {
-  if (_lastGraph) renderGraph(_lastGraph.dataPoints, _lastGraph.dependentVariable);
+  if (_lastGraph) renderGraph(_lastGraph.dataPoints, _lastGraph.dependentVariable, _lastGraph.meta);
 }
 
-export function renderGraph(dataPoints, dependentVariable) {
+// renderGraph(points, depVar, meta?) — meta carries the plot params (expression,
+// variable, xmin/xmax, ymin/ymax) so the graph can be re-plotted later, and the
+// optional y-limits. Re-plotting keeps the existing graph's position & size.
+export function renderGraph(dataPoints, dependentVariable, meta = {}) {
   const canvas = getCanvas();
   if (!canvas) {
     console.error('Fabric canvas not found');
     return;
   }
-  _lastGraph = { dataPoints, dependentVariable };
+  _lastGraph = { dataPoints, dependentVariable, meta };
+
+  const existing = canvas.getObjects().find((o) => o._isGraph);
+  const placement = existing
+    ? { left: existing.left, top: existing.top, scaleX: existing.scaleX, scaleY: existing.scaleY }
+    : null;
 
   const offscreen = _getOffscreenCanvas();
   const gridOn = _gridlinesOn();
@@ -167,6 +175,8 @@ export function renderGraph(dataPoints, dependentVariable) {
             // the left in the plugin. Keep the tick marks (grid.drawTicks).
             ticks: { display: false, maxTicksLimit: 9 },
             border: { color: INK, width: 2 },
+            min: Number.isFinite(meta.ymin) ? meta.ymin : undefined,
+            max: Number.isFinite(meta.ymax) ? meta.ymax : undefined,
             grid,
           },
         },
@@ -191,10 +201,10 @@ export function renderGraph(dataPoints, dependentVariable) {
       const imgEl = new window.Image();
       imgEl.onload = () => {
         const fabricImg = new FabricImage(imgEl, {
-          left,
-          top,
-          scaleX: 0.8,
-          scaleY: 0.8,
+          left: placement ? placement.left : left,
+          top: placement ? placement.top : top,
+          scaleX: placement ? placement.scaleX : 0.8,
+          scaleY: placement ? placement.scaleY : 0.8,
           selectable: true,
           hasControls: true,
           hasBorders: true,
@@ -202,6 +212,7 @@ export function renderGraph(dataPoints, dependentVariable) {
           cornerSize: 12,
           transparentCorners: false,
           _isGraph: true, // tag for identification
+          _plot: { ...meta }, // remembered plot params for re-plotting
         });
 
         // Remove previous graph images
