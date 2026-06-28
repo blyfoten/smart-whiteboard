@@ -6,7 +6,7 @@ import { getCurrentModel } from './ui.js';
 import { renderGraph } from './graph.js';
 import { appendToOutput } from './output.js';
 import { showEquationMenu, hideEquationMenu } from './equation-menu.js';
-import { suspend as historySuspend, pushComposite } from './history.js';
+import { suspend as historySuspend, pushComposite, popLast as historyPopLast } from './history.js';
 import { getDrawColor } from './draw-settings.js';
 
 function appendOutput(html, isError) {
@@ -450,6 +450,23 @@ export async function replotGraph(graphImg, changes) {
   } catch (e) {
     appendOutput(`<b>Error:</b><br>${e.message || 'Failed to re-plot'}`, true);
   }
+}
+
+// When a graph is resized (raster-scaled by a handle drag), re-render it crisply
+// at the new pixel size — constant line/font thickness, more grid intervals.
+export function initGraphResize(canvas) {
+  if (!canvas) return;
+  canvas.on('object:modified', (e) => {
+    const o = e && e.target;
+    if (!o || !o._isGraph || !o._plot) return;
+    const scaled = Math.abs((o.scaleX || 1) - 1) > 1e-3 || Math.abs((o.scaleY || 1) - 1) > 1e-3;
+    if (!scaled) return; // a move — leave its undo entry as-is
+    const r = o.getBoundingRect();
+    historyPopLast(); // drop the scale modify; the re-plot composite is the undo step
+    o.set({ scaleX: 1, scaleY: 1 });
+    o.setCoords();
+    replotGraph(o, { width: Math.round(r.width), height: Math.round(r.height) });
+  });
 }
 
 // Re-plot every graph on the board (e.g. after toggling gridlines). Sequential

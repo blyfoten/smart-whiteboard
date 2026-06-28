@@ -51,7 +51,7 @@ function _axesPlugin(depVar, fontScale = 1) {
       // them centered on the line for an origin-positioned axis, so its own y
       // labels are disabled (ticks.display:false) and we place them here. Skip 0
       // (the x-axis already labels the origin).
-      ctx.font = `${Math.round(15 * fontScale)}px 'Caveat', cursive`;
+      ctx.font = `${Math.round(12 * fontScale)}px 'Caveat', cursive`;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
       (ys.ticks || []).forEach((t) => {
@@ -74,7 +74,7 @@ function _axesPlugin(depVar, fontScale = 1) {
       _arrowhead(ctx, xEnd, y0, 'right');
       _arrowhead(ctx, x0, yEnd, 'up');
 
-      ctx.font = `600 ${Math.round(18 * fontScale)}px 'Caveat', cursive`;
+      ctx.font = `600 ${Math.round(14 * fontScale)}px 'Caveat', cursive`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       ctx.fillText('x', xEnd + 6, y0);
@@ -121,14 +121,23 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}, targetObj 
   _lastGraph = { dataPoints, dependentVariable, meta };
 
   const replacing = targetObj && canvas.getObjects().includes(targetObj);
-  const placement = replacing
-    ? { left: targetObj.left, top: targetObj.top, scaleX: targetObj.scaleX, scaleY: targetObj.scaleY }
-    : null;
+  // Graphs render at their displayed pixel size (image scale stays 1), so line
+  // thickness and font are constant px and tick density scales with size & font.
+  const W = Math.round(Math.max(120, Math.min(1400, meta.width || 200)));
+  const H = Math.round(Math.max(90, Math.min(1000, meta.height || 140)));
+  const placement = replacing ? { left: targetObj.left, top: targetObj.top } : null;
 
   const offscreen = _getOffscreenCanvas();
+  offscreen.width = W;
+  offscreen.height = H;
   const gridOn = _gridlinesOn();
   const fontScale = Number.isFinite(meta.fontScale) ? meta.fontScale : 1;
-  const tickFont = { family: 'Caveat, cursive', size: Math.round(15 * fontScale) };
+  const tickFont = { family: 'Caveat, cursive', size: Math.round(12 * fontScale) };
+  // More room (smaller font, bigger graph) → more intervals.
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const xTicks = clamp(Math.round(W / (24 * fontScale)), 3, 30);
+  const yTicks = clamp(Math.round(H / (22 * fontScale)), 3, 22);
+  const pad = { left: 8, right: Math.round(20 + 16 * fontScale), top: Math.round(14 + 14 * fontScale), bottom: 8 };
 
   // A grid config: tick marks always (on the axes), full gridlines only when on.
   const grid = {
@@ -152,7 +161,7 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}, targetObj 
           label: `${dependentVariable} = f(x)`,
           data: dataPoints.map(p => ({ x: p.x, y: p.y })),
           borderColor: 'rgb(75, 192, 192)',
-          borderWidth: 2.5,
+          borderWidth: 2,
           tension: 0.25,
           fill: false,
           pointRadius: 0,
@@ -162,13 +171,13 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}, targetObj 
         responsive: false,
         animation: false,
         // Extra right/top room so the axis arrows + x/y names sit past the last tick.
-        layout: { padding: { left: 8, right: 34, top: 26, bottom: 8 } },
+        layout: { padding: pad },
         scales: {
           x: {
             type: 'linear',
             position: { y: 0 }, // x-axis drawn through the origin
             // Hide the 0 at the origin; the axes crossing already marks it.
-            ticks: { color: INK, font: tickFont, maxTicksLimit: 11, padding: 6, callback: (v) => (v === 0 ? '' : v) },
+            ticks: { color: INK, font: tickFont, maxTicksLimit: xTicks, padding: 6, callback: (v) => (v === 0 ? '' : v) },
             border: { color: INK, width: 2 },
             grid,
           },
@@ -176,7 +185,7 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}, targetObj 
             position: { x: 0 }, // y-axis drawn through the origin
             // Chart centers labels on an origin axis; we draw them ourselves to
             // the left in the plugin. Keep the tick marks (grid.drawTicks).
-            ticks: { display: false, maxTicksLimit: 9 },
+            ticks: { display: false, maxTicksLimit: yTicks },
             border: { color: INK, width: 2 },
             min: Number.isFinite(meta.ymin) ? meta.ymin : undefined,
             max: Number.isFinite(meta.ymax) ? meta.ymax : undefined,
@@ -206,8 +215,8 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}, targetObj 
         const fabricImg = new FabricImage(imgEl, {
           left: placement ? placement.left : left,
           top: placement ? placement.top : top,
-          scaleX: placement ? placement.scaleX : 0.8,
-          scaleY: placement ? placement.scaleY : 0.8,
+          scaleX: 1, // offscreen is already the displayed pixel size
+          scaleY: 1,
           selectable: true,
           hasControls: true,
           hasBorders: true,
@@ -215,7 +224,7 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}, targetObj 
           cornerSize: 12,
           transparentCorners: false,
           _isGraph: true, // tag for identification
-          _plot: { ...meta }, // remembered plot params for re-plotting
+          _plot: { ...meta, width: W, height: H }, // remembered params (incl. size)
         });
 
         // Replace only the targeted graph (re-plot), or just add a new one — as

@@ -7,6 +7,7 @@ import { initModes } from './modes.js';
 import { initOutputPanel } from './output.js';
 import { initVoice } from './voice.js';
 import { initEquationSelection } from './equation-menu.js';
+import { initGraphResize } from './api.js';
 import { initHistory } from './history.js';
 import { initStatePersistence } from './state.js';
 import { initDrawSettings } from './draw-settings.js';
@@ -43,6 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
       initModes(canvas);
       initDrawSettings(); // restore pen/shape colour, fill, corner radius
       initMoveSnap(canvas); // align-to-objects snapping while moving (toggleable)
+      initGraphResize(canvas); // re-render graphs crisply when resized
       initEquationSelection(canvas); // selecting an equation shows the action menu
 
       // Web fonts load async and Fabric renders text to the canvas, so re-render
