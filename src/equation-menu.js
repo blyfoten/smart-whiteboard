@@ -55,22 +55,13 @@ function changeFontSize(factor) {
   });
 }
 
-// Scale a graph image up/down (undoable), and re-fit the menu.
-function changeGraphSize(factor) {
-  const canvas = getCanvas();
-  if (!canvas || !target) return;
-  const bx = target.scaleX || 1;
-  const by = target.scaleY || 1;
-  target.set({ scaleX: bx * factor, scaleY: by * factor });
-  target.setCoords();
-  canvas.requestRenderAll();
-  positionMenu();
-  canvas.fire('object:modified', { target });
-  pushComposite(() => {
-    target.set({ scaleX: bx, scaleY: by });
-    target.setCoords();
-    canvas.requestRenderAll();
-  });
+// Scale a graph's axis-label font (re-renders the chart; the plot footprint and
+// line thickness stay the same). Drag the handles to resize the whole graph.
+function changeGraphFont(factor) {
+  if (!target || !target._plot) return;
+  const cur = Number.isFinite(target._plot.fontScale) ? target._plot.fontScale : 1;
+  const next = Math.max(0.5, Math.min(3, cur * factor));
+  replotGraph(target, { fontScale: next });
 }
 
 function numInput(value, title) {
@@ -329,8 +320,8 @@ export function showEquationMenu(targetObj, data) {
   }
 
   if (target && target._isGraph) {
-    row.appendChild(makeButton('A−', 'Smaller graph', () => changeGraphSize(1 / 1.15)));
-    row.appendChild(makeButton('A+', 'Larger graph', () => changeGraphSize(1.15)));
+    row.appendChild(makeButton('A−', 'Smaller axis labels', () => changeGraphFont(1 / 1.15)));
+    row.appendChild(makeButton('A+', 'Larger axis labels', () => changeGraphFont(1.15)));
     if (target._plot) row.appendChild(graphLimits(target));
   }
 

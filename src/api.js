@@ -412,7 +412,7 @@ export async function drawGraph() {
       const variable = Object.keys(ranges)[0] || 'x';
       renderGraph(data.data, dependentVariable, {
         expression: equation, dependentVariable, variable,
-        xmin: ranges[variable][0], xmax: ranges[variable][1], ymin: null, ymax: null,
+        xmin: ranges[variable][0], xmax: ranges[variable][1], ymin: null, ymax: null, fontScale: 1,
       });
       appendOutput(
         `<b>Graph created for:</b> ${dependentVariable} = ${equation}<br>` +

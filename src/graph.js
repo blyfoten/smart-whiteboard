@@ -3,6 +3,7 @@
 import Chart from 'chart.js/auto';
 import { getCanvas, getCanvasBoundingBox } from './canvas.js';
 import { getMode } from './modes.js';
+import { suspend as historySuspend, pushComposite } from './history.js';
 import { Image as FabricImage } from 'fabric';
 
 // Offscreen canvas for rendering the chart
@@ -32,7 +33,7 @@ function _arrowhead(ctx, x, y, dir) {
 // Chart.js plugin: draw arrowheads at the axis ends and the axis names (x and
 // the dependent variable) beside those ends, instead of Chart's built-in axis
 // titles (which sit awkwardly mid-axis when the axes pass through the origin).
-function _axesPlugin(depVar) {
+function _axesPlugin(depVar, fontScale = 1) {
   return {
     id: 'handDrawnAxes',
     afterDatasetsDraw(chart) {
@@ -50,7 +51,7 @@ function _axesPlugin(depVar) {
       // them centered on the line for an origin-positioned axis, so its own y
       // labels are disabled (ticks.display:false) and we place them here. Skip 0
       // (the x-axis already labels the origin).
-      ctx.font = "15px 'Caveat', cursive";
+      ctx.font = `${Math.round(15 * fontScale)}px 'Caveat', cursive`;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
       (ys.ticks || []).forEach((t) => {
@@ -73,7 +74,7 @@ function _axesPlugin(depVar) {
       _arrowhead(ctx, xEnd, y0, 'right');
       _arrowhead(ctx, x0, yEnd, 'up');
 
-      ctx.font = "600 18px 'Caveat', cursive";
+      ctx.font = `600 ${Math.round(18 * fontScale)}px 'Caveat', cursive`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       ctx.fillText('x', xEnd + 6, y0);
@@ -125,7 +126,8 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}) {
 
   const offscreen = _getOffscreenCanvas();
   const gridOn = _gridlinesOn();
-  const tickFont = { family: 'Caveat, cursive', size: 15 };
+  const fontScale = Number.isFinite(meta.fontScale) ? meta.fontScale : 1;
+  const tickFont = { family: 'Caveat, cursive', size: Math.round(15 * fontScale) };
 
   // A grid config: tick marks always (on the axes), full gridlines only when on.
   const grid = {
@@ -185,7 +187,7 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}) {
           tooltip: { enabled: false },
         },
       },
-      plugins: [_axesPlugin(dependentVariable)],
+      plugins: [_axesPlugin(dependentVariable, fontScale)],
     });
 
     // Chart.js needs a frame to render with animation:false
@@ -215,12 +217,16 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}) {
           _plot: { ...meta }, // remembered plot params for re-plotting
         });
 
-        // Remove previous graph images
-        canvas.getObjects().forEach(obj => {
-          if (obj._isGraph) canvas.remove(obj);
+        // Replace previous graph image(s) with the new one as one undo step.
+        const removed = canvas.getObjects().filter((obj) => obj._isGraph);
+        historySuspend(() => {
+          removed.forEach((obj) => canvas.remove(obj));
+          canvas.add(fabricImg);
         });
-
-        canvas.add(fabricImg);
+        pushComposite((c) => historySuspend(() => {
+          c.remove(fabricImg);
+          removed.forEach((obj) => c.add(obj));
+        }));
         // Only leave the graph selected if the user is actually in Select mode;
         // otherwise drop the selection so drawing/shapes aren't interrupted.
         if (getMode() === 'select') {
