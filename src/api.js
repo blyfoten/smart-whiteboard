@@ -445,9 +445,20 @@ export async function replotGraph(graphImg, changes) {
       }),
     });
     const data = await response.json();
-    if (data.success) renderGraph(data.data, p.dependentVariable, p);
+    if (data.success) renderGraph(data.data, p.dependentVariable, p, graphImg);
     else appendOutput(`<b>Error re-plotting:</b><br>${data.message || 'Unknown error'}`, true);
   } catch (e) {
     appendOutput(`<b>Error:</b><br>${e.message || 'Failed to re-plot'}`, true);
+  }
+}
+
+// Re-plot every graph on the board (e.g. after toggling gridlines). Sequential
+// because all graphs share one offscreen render canvas.
+export async function replotAllGraphs() {
+  const canvas = getCanvas();
+  if (!canvas) return;
+  const graphs = canvas.getObjects().filter((o) => o._isGraph && o._plot);
+  for (const g of graphs) {
+    await replotGraph(g, {});
   }
 }

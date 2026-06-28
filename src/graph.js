@@ -108,10 +108,11 @@ export function redrawLastGraph() {
   if (_lastGraph) renderGraph(_lastGraph.dataPoints, _lastGraph.dependentVariable, _lastGraph.meta);
 }
 
-// renderGraph(points, depVar, meta?) — meta carries the plot params (expression,
-// variable, xmin/xmax, ymin/ymax) so the graph can be re-plotted later, and the
-// optional y-limits. Re-plotting keeps the existing graph's position & size.
-export function renderGraph(dataPoints, dependentVariable, meta = {}) {
+// renderGraph(points, depVar, meta?, targetObj?) — meta carries the plot params
+// (expression, variable, x/y limits, font scale) so the graph can be re-plotted
+// later. With targetObj, re-plot ONLY that graph in place (keeping its position
+// & size); without it, add a NEW independent graph below existing content.
+export function renderGraph(dataPoints, dependentVariable, meta = {}, targetObj = null) {
   const canvas = getCanvas();
   if (!canvas) {
     console.error('Fabric canvas not found');
@@ -119,9 +120,9 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}) {
   }
   _lastGraph = { dataPoints, dependentVariable, meta };
 
-  const existing = canvas.getObjects().find((o) => o._isGraph);
-  const placement = existing
-    ? { left: existing.left, top: existing.top, scaleX: existing.scaleX, scaleY: existing.scaleY }
+  const replacing = targetObj && canvas.getObjects().includes(targetObj);
+  const placement = replacing
+    ? { left: targetObj.left, top: targetObj.top, scaleX: targetObj.scaleX, scaleY: targetObj.scaleY }
     : null;
 
   const offscreen = _getOffscreenCanvas();
@@ -217,8 +218,9 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}) {
           _plot: { ...meta }, // remembered plot params for re-plotting
         });
 
-        // Replace previous graph image(s) with the new one as one undo step.
-        const removed = canvas.getObjects().filter((obj) => obj._isGraph);
+        // Replace only the targeted graph (re-plot), or just add a new one — as
+        // one undo step either way.
+        const removed = replacing ? [targetObj] : [];
         historySuspend(() => {
           removed.forEach((obj) => canvas.remove(obj));
           canvas.add(fabricImg);

@@ -174,7 +174,13 @@ export async function executeAction(name, args = {}) {
         body: JSON.stringify({ expression: String(args.expression || ''), dependentVariable: 'y', scope, ranges }),
       });
       const data = await resp.json();
-      if (data.success) { renderGraph(data.data, 'y'); return { ok: true, points: data.data.length }; }
+      if (data.success) {
+        renderGraph(data.data, 'y', {
+          expression: String(args.expression || ''), dependentVariable: 'y', variable,
+          xmin, xmax, ymin: null, ymax: null, fontScale: 1,
+        });
+        return { ok: true, points: data.data.length };
+      }
       return { error: data.message || 'graph failed' };
     }
     case 'get_objects': {

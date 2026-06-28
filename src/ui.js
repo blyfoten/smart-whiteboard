@@ -2,8 +2,7 @@
 
 import { getCanvas, undoLast, saveScreenshot, clearCanvas } from './canvas.js';
 import { IText } from 'fabric';
-import { solveEquationFromText, extractEquation, analyzeRegionInk, analyzeText, parseTypedEquation, drawGraph } from './api.js';
-import { redrawLastGraph } from './graph.js';
+import { solveEquationFromText, extractEquation, analyzeRegionInk, analyzeText, parseTypedEquation, drawGraph, replotAllGraphs } from './api.js';
 import { startRegionSelect, inkInRegion } from './region-select.js';
 import { getDrawColor } from './draw-settings.js';
 import { toggleRecognition } from './speech.js';
@@ -124,7 +123,7 @@ export function initializeEventListeners() {
 
   const gridSel = document.getElementById('graph-grid-select');
   if (gridSel) {
-    gridSel.addEventListener('change', () => redrawLastGraph());
+    gridSel.addEventListener('change', () => replotAllGraphs());
   }
 
   const startRecordBtn = document.getElementById('start-record-btn');
