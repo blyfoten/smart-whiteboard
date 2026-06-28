@@ -23,6 +23,8 @@ function _getTouchCenter(t1, t2) {
 
 function _setupPinchZoom(canvas) {
   const upperEl = canvas.upperCanvasEl;
+  let _prevDrawing = false;
+  let _prevSelection = false;
 
   // Discard any free-draw stroke that's mid-flight (e.g. the first finger of a
   // pinch already pressed down) so it isn't committed as a stray dot.
@@ -41,6 +43,9 @@ function _setupPinchZoom(canvas) {
   upperEl.addEventListener('touchstart', (e) => {
     if (e.touches.length === 2) {
       _isPinching = true;
+      // Remember the current mode so we can restore it after the pinch.
+      _prevDrawing = canvas.isDrawingMode;
+      _prevSelection = canvas.selection;
       canvas.isDrawingMode = false;
       canvas.selection = false;
       abortFreeDraw();
@@ -85,8 +90,10 @@ function _setupPinchZoom(canvas) {
     if (e.touches.length < 2 && _isPinching) {
       _isPinching = false;
       abortFreeDraw();
-      canvas.isDrawingMode = true;
-      canvas.selection = false;
+      // Restore whatever mode was active before the pinch instead of forcing
+      // draw mode (a pinch in Select mode would otherwise kick back to drawing).
+      canvas.isDrawingMode = _prevDrawing;
+      canvas.selection = _prevSelection;
     }
   });
 }
