@@ -170,6 +170,9 @@ export function renderGraph(dataPoints, dependentVariable, meta = {}, targetObj 
       options: {
         responsive: false,
         animation: false,
+        // Render the PNG at exactly the offscreen pixel size (no retina upscaling),
+        // so the Fabric image's natural size == our intended size.
+        devicePixelRatio: 1,
         // Extra right/top room so the axis arrows + x/y names sit past the last tick.
         layout: { padding: pad },
         scales: {

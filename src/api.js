@@ -6,7 +6,7 @@ import { getCurrentModel } from './ui.js';
 import { renderGraph } from './graph.js';
 import { appendToOutput } from './output.js';
 import { showEquationMenu, hideEquationMenu } from './equation-menu.js';
-import { suspend as historySuspend, pushComposite, popLast as historyPopLast } from './history.js';
+import { suspend as historySuspend, pushComposite } from './history.js';
 import { getDrawColor } from './draw-settings.js';
 
 function appendOutput(html, isError) {
@@ -459,13 +459,14 @@ export function initGraphResize(canvas) {
   canvas.on('object:modified', (e) => {
     const o = e && e.target;
     if (!o || !o._isGraph || !o._plot) return;
-    const scaled = Math.abs((o.scaleX || 1) - 1) > 1e-3 || Math.abs((o.scaleY || 1) - 1) > 1e-3;
-    if (!scaled) return; // a move — leave its undo entry as-is
-    const r = o.getBoundingRect();
-    historyPopLast(); // drop the scale modify; the re-plot composite is the undo step
-    o.set({ scaleX: 1, scaleY: 1 });
-    o.setCoords();
-    replotGraph(o, { width: Math.round(r.width), height: Math.round(r.height) });
+    const sx = o.scaleX || 1;
+    const sy = o.scaleY || 1;
+    if (Math.abs(sx - 1) < 1e-3 && Math.abs(sy - 1) < 1e-3) return; // a move, not a resize
+    // New displayed size in scene px (the dragged size). Re-render at that size;
+    // the new image is at scale 1, so it lands exactly where the dragged one was.
+    const newW = Math.round(o.width * sx);
+    const newH = Math.round(o.height * sy);
+    replotGraph(o, { width: newW, height: newH });
   });
 }
 
