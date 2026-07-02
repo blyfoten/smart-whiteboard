@@ -116,6 +116,11 @@ function _reapplyAnchors(skip) {
   let any = false;
   for (const poly of objs) {
     if (poly === skip || !poly._edgeAnchors) continue;
+    // While an object is part of an active (multi-) selection its transform is
+    // group-relative, so applyVertexSceneMove's canvas-space math would corrupt
+    // its points and make it jump. The whole selection moves rigidly anyway, so
+    // the anchored vertices stay glued without any re-pinning.
+    if (poly.group) continue;
     for (const key of Object.keys(poly._edgeAnchors)) {
       const a = poly._edgeAnchors[key];
       if (!a || !a.target || !objs.includes(a.target)) continue;
