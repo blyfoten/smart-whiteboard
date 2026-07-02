@@ -11,7 +11,7 @@ export { pathToPoints };
 
 // A straight or multi-segment stroke becomes a Polyline/Polygon with draggable
 // vertices. `closed` true → a Polygon (closed loop), else an open Polyline.
-function buildPoly(points, opts, closed) {
+export function buildPoly(points, opts, closed) {
   const Ctor = closed ? Polygon : Polyline;
   const poly = new Ctor(points, {
     stroke: opts.color,

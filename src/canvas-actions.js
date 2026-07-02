@@ -9,13 +9,64 @@
 // (A spatial x,y fallback is kept for when no id is available.)
 
 import { getCanvas, clearCanvas } from './canvas.js';
-import { Line, Rect, Ellipse, IText, Path } from 'fabric';
+import { Line, Rect, Ellipse, IText, Path, Point } from 'fabric';
 import { renderGraph } from './graph.js';
 import { extractEquation, solveToBoard } from './api.js';
 import { getCurrentModel } from './ui.js';
+import { buildPoly } from './shapes.js';
+import { snapPointToShapes, toTargetLocal } from './edge-snap.js';
 
 const STROKE = 'black';
 const STROKE_WIDTH = 4;
+const ANCHOR_PX = 22; // screen-pixel radius for anchoring a polyline vertex to a shape
+
+// A CSS colour + optional opacity → an rgba() fill (hex only gets the alpha; a
+// named colour is returned as-is). '' when no fill / transparent.
+function toRgba(color, opacity) {
+  if (color == null || color === 'none' || color === 'transparent' || color === '') return '';
+  const a = Number.isFinite(Number(opacity)) ? Math.max(0, Math.min(1, Number(opacity))) : 1;
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(color));
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+  }
+  return String(color); // named colour — alpha only supported for hex
+}
+
+// Shared style options for a drawing tool: outline colour/width, fill, corners.
+function styleOf(args) {
+  return {
+    color: args.color ? String(args.color) : STROKE,
+    strokeWidth: num(args.strokeWidth, STROKE_WIDTH),
+    fill: toRgba(args.fill, args.fillOpacity),
+    cornerRadius: Math.max(0, num(args.cornerRadius, 0)),
+  };
+}
+
+// Pin any polyline vertex placed close to an existing shape's edge onto that edge
+// and record a sticky anchor, so the vertex follows the shape when it's moved —
+// the same machinery the freehand smart-shape path uses. `scenePts` are the
+// vertices in scene coords (== poly.points before its bounding box is recomputed).
+function anchorPolyVertices(canvas, poly, scenePts) {
+  const targets = canvas.getObjects().filter((o) => o._isShape && !o._isGhost && o !== poly);
+  if (!targets.length) return;
+  const maxDist = ANCHOR_PX / (canvas.getZoom() || 1);
+  const anchors = {};
+  let changed = false;
+  scenePts.forEach((p, i) => {
+    const hit = snapPointToShapes(p, targets, maxDist);
+    if (hit) {
+      poly.points[i] = new Point(hit.point.x, hit.point.y);
+      anchors[i] = { target: hit.target, local: toTargetLocal(hit.target, hit.point) };
+      changed = true;
+    }
+  });
+  if (changed) {
+    poly._edgeAnchors = anchors;
+    poly.setBoundingBox(true);
+    poly.setCoords();
+  }
+}
 
 // AI solve/steps need an LLM; math.js can't do symbolic work.
 function aiModel() {
@@ -140,27 +191,46 @@ export async function executeAction(name, args = {}) {
     case 'draw_line': {
       const a = pctToScene(canvas, args.x1, args.y1);
       const b = pctToScene(canvas, args.x2, args.y2);
-      return place(new Line([a.x, a.y, b.x, b.y], { stroke: STROKE, strokeWidth: STROKE_WIDTH }));
+      const s = styleOf(args);
+      return place(new Line([a.x, a.y, b.x, b.y], { stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
     }
     case 'draw_rect': {
       const p = pctToScene(canvas, args.x, args.y);
-      const s = pctLen(canvas, num(args.width, 10), num(args.height, 10));
-      return place(new Rect({ left: p.x, top: p.y, width: s.w, height: s.h, fill: 'transparent', stroke: STROKE, strokeWidth: STROKE_WIDTH }));
+      const sz = pctLen(canvas, num(args.width, 10), num(args.height, 10));
+      const s = styleOf(args);
+      return place(new Rect({ left: p.x, top: p.y, width: sz.w, height: sz.h, rx: s.cornerRadius, ry: s.cornerRadius, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
     }
     case 'draw_ellipse': {
       const p = pctToScene(canvas, args.x, args.y);
-      const s = pctLen(canvas, num(args.width, 10), num(args.height, 10));
-      return place(new Ellipse({ left: p.x, top: p.y, rx: s.w / 2, ry: s.h / 2, fill: 'transparent', stroke: STROKE, strokeWidth: STROKE_WIDTH }));
+      const sz = pctLen(canvas, num(args.width, 10), num(args.height, 10));
+      const s = styleOf(args);
+      return place(new Ellipse({ left: p.x, top: p.y, rx: sz.w / 2, ry: sz.h / 2, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
     }
     case 'draw_arrow': {
       const a = pctToScene(canvas, args.x1, args.y1);
       const b = pctToScene(canvas, args.x2, args.y2);
-      return place(new Path(arrowPath(a, b), { stroke: STROKE, strokeWidth: STROKE_WIDTH, fill: '' }));
+      const s = styleOf(args);
+      return place(new Path(arrowPath(a, b), { stroke: s.color, strokeWidth: s.strokeWidth, fill: '', _isShape: true }));
+    }
+    case 'draw_polyline':
+    case 'draw_polygon': {
+      const closed = name === 'draw_polygon' || args.closed === true;
+      const raw = Array.isArray(args.points) ? args.points : [];
+      if (raw.length < 2) return { ok: false, message: 'need at least 2 points (each {x, y} in percent)' };
+      const scenePts = raw.map((pt) => pctToScene(canvas, pt.x, pt.y));
+      const s = styleOf(args);
+      const poly = buildPoly(scenePts, { color: s.color, strokeWidth: s.strokeWidth, fill: closed ? s.fill : '' }, closed);
+      poly.set({ _isShape: true });
+      // Anchor vertices near an existing shape's edge (default on) so the line
+      // sticks to shapes when they move — pass anchor:false to opt out.
+      if (args.anchor !== false) anchorPolyVertices(canvas, poly, scenePts);
+      return place(poly);
     }
     case 'write_text': {
       const p = pctToScene(canvas, args.x, args.y);
       const fontSize = Math.max(10, pctLen(canvas, 0, num(args.size, 6)).h);
-      return place(new IText(String(args.text || ''), { left: p.x, top: p.y, fill: STROKE, fontSize, fontFamily: 'Caveat, cursive' }));
+      const color = args.color ? String(args.color) : STROKE;
+      return place(new IText(String(args.text || ''), { left: p.x, top: p.y, fill: color, fontSize, fontFamily: 'Caveat, cursive' }));
     }
     case 'plot_function': {
       const variable = String(args.variable || 'x');
@@ -236,6 +306,27 @@ export async function executeAction(name, args = {}) {
       const o = resolveTarget(canvas, args);
       if (!o) return { ok: false, message: 'shape not found' };
       applyColor(o, String(args.color || 'black'));
+      canvas.requestRenderAll();
+      return { ok: true, id: ensureId(o) };
+    }
+    case 'style_object': {
+      const o = resolveTarget(canvas, args);
+      if (!o) return { ok: false, message: 'shape not found' };
+      if (args.color != null) o.set({ stroke: String(args.color) });
+      if (args.strokeWidth != null) o.set({ strokeWidth: num(args.strokeWidth, o.strokeWidth) });
+      if (args.fill != null || args.fillOpacity != null) {
+        // Text keeps a solid fill (its colour); geometry gets an rgba fill.
+        if (o.type === 'i-text' || o.type === 'text') {
+          if (args.fill != null) o.set({ fill: String(args.fill) });
+        } else {
+          o.set({ fill: toRgba(args.fill != null ? args.fill : o.fill, args.fillOpacity) });
+        }
+      }
+      if (args.cornerRadius != null && o.type === 'rect') {
+        const r = Math.max(0, num(args.cornerRadius, 0));
+        o.set({ rx: r, ry: r });
+      }
+      o.set({ dirty: true });
       canvas.requestRenderAll();
       return { ok: true, id: ensureId(o) };
     }
