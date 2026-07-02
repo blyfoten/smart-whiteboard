@@ -277,6 +277,23 @@ export function initModes(canvas) {
     }
   });
 
+  // Direction-aware marquee selection (CAD-style window vs. crossing):
+  //   drag downward (top→bottom) → "window": only fully-enclosed objects.
+  //   drag upward   (bottom→top) → "crossing": any object the box touches.
+  // Fabric reads canvas.selectionFullyContained when it finalizes the marquee on
+  // mouse:up, so we set it live during the drag based on the pointer direction.
+  let _marqueeStartY = null;
+  canvas.on('mouse:down', (opt) => {
+    if (_mode !== 'select') { _marqueeStartY = null; return; }
+    _marqueeStartY = canvas.getPointer(opt.e).y;
+  });
+  canvas.on('mouse:move', (opt) => {
+    // Only while an actual marquee is being dragged (not moving/resizing a shape).
+    if (_marqueeStartY === null || canvas._currentTransform || !canvas._groupSelector) return;
+    canvas.selectionFullyContained = canvas.getPointer(opt.e).y > _marqueeStartY;
+  });
+  canvas.on('mouse:up', () => { _marqueeStartY = null; });
+
   // Hold Space → temporary Select; release → restore previous mode.
   let tempPrevMode = null;
   window.addEventListener('keydown', (ev) => {
