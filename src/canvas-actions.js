@@ -492,7 +492,7 @@ export async function executeAction(name, args = {}) {
       historySuspend(() => {
         CALIB_CROSSES.forEach((c) => {
           const p = pctToScene(canvas, c.x, c.y);
-          const arm = pctLen(canvas, 1.2, 0).w;
+          const arm = pctLen(canvas, 2, 0).w;
           const cross = new Path(
             `M ${p.x - arm} ${p.y} L ${p.x + arm} ${p.y} M ${p.x} ${p.y - arm} L ${p.x} ${p.y + arm}`,
             { stroke: '#d11', strokeWidth: 2, fill: '', selectable: false, evented: false, excludeFromExport: true, _noHistory: true, _isCalib: true }
@@ -519,7 +519,7 @@ export async function executeAction(name, args = {}) {
         instructions:
           `Calibration round ${_calib.round}. The board now shows ${CALIB_CROSSES.length} red crosses and 1 dashed blue rectangle. ` +
           'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read off the grid — cx,cy places the ellipse by its CENTER. ' +
-          'Solid gridlines mark the 10s, faint dotted lines mark the 5s; a cross can sit BETWEEN lines, so read each coordinate to the nearest 1 — never snap to the nearest labeled line. ' +
+          'Strong NUMBERED gridlines mark the 10s; thin faint lines mark the 5s (15, 25, 35...). A cross often sits ON a thin 5-line or between lines — read each coordinate to the nearest 1, never snap to the nearest numbered line. ' +
           '(2) Write the word CAL centered in the dashed blue rectangle, sized so the text is roughly 70% of the box height — do NOT use boxId, place it by reading the video. ' +
           'When all marks are placed, call calibrate_check.',
       };
@@ -626,7 +626,7 @@ export async function executeAction(name, args = {}) {
       );
 
       summary.advice = slips > 0
-        ? `Your aim is fine (clean marks average ${stats.cleanErr}% error) but ${slips} mark(s) SLIPPED to a wrong gridline — a misread, not a bias. Remember: solid lines are the 10s, faint dotted lines are the 5s, and a target can sit BETWEEN lines. Call calibrate_start again and read each position to the nearest 1 before drawing; do not snap to the nearest labeled line.`
+        ? `Your aim is fine (clean marks average ${stats.cleanErr}% error) but ${slips} mark(s) SLIPPED to a wrong gridline — a misread, not a bias. Remember: strong numbered lines are the 10s, thin faint lines are the 5s (15, 25...), and a target can sit ON a 5-line or between lines. Call calibrate_start again and read each position to the nearest 1 before drawing; do not snap to the nearest numbered line.`
         : (stats.cleanErr > 3
           ? `Placement is off by ~${stats.cleanErr}%. From now on, whenever you place something by READING the video (not from get_objects/tool-result numbers), correct your aim with: ${corrText}. Then call calibrate_start again to verify (max 3 rounds).`
           : `Good accuracy — calibration done. Keep applying this correction to eye-based placements: ${corrText}. Briefly tell the user the mean error.`);
