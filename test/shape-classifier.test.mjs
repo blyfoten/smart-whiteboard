@@ -273,4 +273,40 @@ check('scribble / handwriting → null (stays ink)', () => {
   assert.equal(classifyStroke(pts), null);
 });
 
+check('L-polyline ending in an arrowhead → polyline + arrowEnd', () => {
+  // Right, then down, then a small V head drawn back up-left then up-right.
+  const a = { x: 100, y: 100 };
+  const b = { x: 280, y: 100 };
+  const c = { x: 280, y: 260 }; // tip
+  const w1 = { x: 262, y: 235 };
+  const w2 = { x: 297, y: 236 };
+  const pts = [...line(a, b, 25), ...line(b, c, 25), ...line(c, w1, 6), ...line(w1, c, 6), ...line(c, w2, 6)];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+  assert.equal(d.arrowEnd, true);
+  // Head stripped: the shaft keeps just its 3 corner vertices.
+  assert.equal(d.points.length, 3);
+});
+
+check('straight stroke with one-wing head → arrow-ended line', () => {
+  const a = { x: 100, y: 300 };
+  const tip = { x: 330, y: 300 };
+  const w = { x: 305, y: 282 };
+  const pts = [...line(a, tip, 30), ...line(tip, w, 7)];
+  const d = classifyStroke(pts);
+  // Either the dedicated straight-arrow detector or the polyline path may
+  // catch this — both must mark it as an arrow.
+  assert.ok(d?.type === 'arrow' || (d?.type === 'line' && d.arrowEnd === true), `got ${JSON.stringify(d)}`);
+});
+
+check('plain L-polyline has no arrowEnd', () => {
+  const pts = [
+    ...line({ x: 100, y: 100 }, { x: 280, y: 100 }, 25),
+    ...line({ x: 280, y: 100 }, { x: 280, y: 260 }, 25),
+  ];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+  assert.ok(!d.arrowEnd);
+});
+
 console.log(`\n${passed} checks passed.`);

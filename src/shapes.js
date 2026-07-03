@@ -6,6 +6,7 @@
 import { Rect, Ellipse, Path, Polyline, Polygon } from 'fabric';
 import { classifyStroke, pathToPoints } from './shape-classifier.js';
 import { enablePointEditing } from './node-edit.js';
+import { dashArrayFor } from './draw-settings.js';
 
 export { pathToPoints };
 
@@ -17,12 +18,30 @@ export function buildPoly(points, opts, closed) {
     stroke: opts.color,
     strokeWidth: opts.strokeWidth,
     fill: opts.fill || '',
+    strokeDashArray: opts.dashArray || null,
     strokeLineJoin: 'round',
     strokeLineCap: 'round',
     objectCaching: false,
   });
   enablePointEditing(poly);
   return poly;
+}
+
+// Append the two wing points of an arrowhead to an open polyline's point list:
+// [..., tip] -> [..., tip, w1, tip, w2]. The polyline then renders shaft + V
+// head as one editable object (the wings get node handles too).
+export function withArrowhead(points) {
+  const n = points.length;
+  if (n < 2) return points;
+  const tip = points[n - 1];
+  const prev = points[n - 2];
+  const segLen = Math.hypot(tip.x - prev.x, tip.y - prev.y);
+  const ang = Math.atan2(tip.y - prev.y, tip.x - prev.x);
+  const len = Math.max(10, Math.min(26, 0.35 * segLen));
+  const th = (28 * Math.PI) / 180;
+  const w1 = { x: tip.x - len * Math.cos(ang - th), y: tip.y - len * Math.sin(ang - th) };
+  const w2 = { x: tip.x - len * Math.cos(ang + th), y: tip.y - len * Math.sin(ang + th) };
+  return [...points, w1, { x: tip.x, y: tip.y }, w2];
 }
 
 function dist(a, b) {
@@ -39,7 +58,7 @@ function buildArrowPath(a, b, opts) {
   const d =
     `M ${a.x} ${a.y} L ${b.x} ${b.y} ` +
     `L ${h1.x} ${h1.y} M ${b.x} ${b.y} L ${h2.x} ${h2.y}`;
-  return new Path(d, { stroke: opts.color, strokeWidth: opts.strokeWidth, fill: '' });
+  return new Path(d, { stroke: opts.color, strokeWidth: opts.strokeWidth, fill: '', strokeDashArray: opts.dashArray || null });
 }
 
 // recognizeStroke(points, { strokeWidth, color, fill, cornerRadius }) -> { shape, type } | null
@@ -51,21 +70,28 @@ export function recognizeStroke(pts, opts = {}) {
   const color = opts.color || 'black';
   const fill = opts.fill || '';              // '' = transparent
   const radius = Math.max(0, opts.cornerRadius || 0);
-  const common = { stroke: color, strokeWidth, fill };
+  const dashArray = dashArrayFor(opts.lineStyle || 'solid', strokeWidth);
+  const common = { stroke: color, strokeWidth, fill, strokeDashArray: dashArray };
 
   switch (desc.type) {
-    case 'line':
-      // Lines/arrows are never filled.
+    case 'line': {
+      // Lines/arrows are never filled. An arrowEnd (hand-drawn V at the tip)
+      // becomes wing points appended to the editable polyline.
+      let pts2 = [{ x: desc.a.x, y: desc.a.y }, { x: desc.b.x, y: desc.b.y }];
+      if (desc.arrowEnd) pts2 = withArrowhead(pts2);
       return {
-        type: 'line',
-        shape: buildPoly([{ x: desc.a.x, y: desc.a.y }, { x: desc.b.x, y: desc.b.y }], { color, strokeWidth, fill: '' }, false),
+        type: desc.arrowEnd ? 'arrow' : 'line',
+        shape: buildPoly(pts2, { color, strokeWidth, fill: '', dashArray }, false),
       };
-    case 'polyline':
-      return { type: 'polyline', shape: buildPoly(desc.points, { color, strokeWidth, fill: '' }, false) };
+    }
+    case 'polyline': {
+      const pts2 = desc.arrowEnd ? withArrowhead(desc.points) : desc.points;
+      return { type: 'polyline', arrowEnd: !!desc.arrowEnd, shape: buildPoly(pts2, { color, strokeWidth, fill: '', dashArray }, false) };
+    }
     case 'polygon':
-      return { type: 'polygon', shape: buildPoly(desc.points, { color, strokeWidth, fill }, true) };
+      return { type: 'polygon', shape: buildPoly(desc.points, { color, strokeWidth, fill, dashArray }, true) };
     case 'arrow':
-      return { type: 'arrow', shape: buildArrowPath(desc.a, desc.b, { color, strokeWidth }) };
+      return { type: 'arrow', shape: buildArrowPath(desc.a, desc.b, { color, strokeWidth, dashArray }) };
     case 'circle':
     case 'ellipse':
       return {

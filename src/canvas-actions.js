@@ -22,26 +22,47 @@ const STROKE = 'black';
 const STROKE_WIDTH = 4;
 const ANCHOR_PX = 22; // screen-pixel radius for anchoring a polyline vertex to a shape
 
-// A CSS colour + optional opacity → an rgba() fill (hex only gets the alpha; a
-// named colour is returned as-is). '' when no fill / transparent.
+// Parse a colour to [r, g, b] — hex or rgb()/rgba() strings (an existing fill
+// is usually already rgba, so re-styling its opacity must parse it back).
+function parseColor(color) {
+  if (typeof color !== 'string') return null;
+  let m = /^#?([0-9a-f]{6})$/i.exec(color);
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+  return null;
+}
+
+// A CSS colour + optional opacity → an rgba() fill (a named colour is returned
+// as-is — alpha needs a parseable colour). '' when no fill / transparent.
 function toRgba(color, opacity) {
   if (color == null || color === 'none' || color === 'transparent' || color === '') return '';
   const a = Number.isFinite(Number(opacity)) ? Math.max(0, Math.min(1, Number(opacity))) : 1;
-  const m = /^#?([0-9a-f]{6})$/i.exec(String(color));
-  if (m) {
-    const n = parseInt(m[1], 16);
-    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
-  }
-  return String(color); // named colour — alpha only supported for hex
+  const rgb = parseColor(String(color));
+  if (rgb) return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${a})`;
+  return String(color);
+}
+
+// strokeDashArray for a lineStyle at a stroke width (null = solid).
+function dashFor(lineStyle, strokeWidth) {
+  const w = Math.max(1, strokeWidth || 4);
+  if (lineStyle === 'dashed') return [w * 3, w * 2];
+  if (lineStyle === 'dotted') return [Math.max(1, w * 0.4), w * 1.9];
+  return null;
 }
 
 // Shared style options for a drawing tool: outline colour/width, fill, corners.
 function styleOf(args) {
+  const strokeWidth = num(args.strokeWidth, STROKE_WIDTH);
   return {
     color: args.color ? String(args.color) : STROKE,
-    strokeWidth: num(args.strokeWidth, STROKE_WIDTH),
+    strokeWidth,
     fill: toRgba(args.fill, args.fillOpacity),
     cornerRadius: Math.max(0, num(args.cornerRadius, 0)),
+    dash: dashFor(args.lineStyle, strokeWidth),
   };
 }
 
@@ -368,27 +389,27 @@ export async function executeAction(name, args = {}) {
       const a = pctToScene(canvas, args.x1, args.y1);
       const b = pctToScene(canvas, args.x2, args.y2);
       const s = styleOf(args);
-      return place(new Line([a.x, a.y, b.x, b.y], { stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
+      return place(new Line([a.x, a.y, b.x, b.y], { stroke: s.color, strokeWidth: s.strokeWidth, strokeDashArray: s.dash, _isShape: true }));
     }
     case 'draw_rect': {
       const sz = pctLen(canvas, num(args.width, 10), num(args.height, 10));
       const p = topLeftOf(canvas, args, sz);
       const s = styleOf(args);
-      const res = place(new Rect({ left: p.x, top: p.y, width: sz.w, height: sz.h, rx: s.cornerRadius, ry: s.cornerRadius, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
+      const res = place(new Rect({ left: p.x, top: p.y, width: sz.w, height: sz.h, rx: s.cornerRadius, ry: s.cornerRadius, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, strokeDashArray: s.dash, _isShape: true }));
       return { ...res, hint: `to put a label INSIDE this shape call write_text with boxId="${res.id}" (auto-centered + auto-sized) — never with x,y` };
     }
     case 'draw_ellipse': {
       const sz = pctLen(canvas, num(args.width, 10), num(args.height, 10));
       const p = topLeftOf(canvas, args, sz);
       const s = styleOf(args);
-      const res = place(new Ellipse({ left: p.x, top: p.y, rx: sz.w / 2, ry: sz.h / 2, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
+      const res = place(new Ellipse({ left: p.x, top: p.y, rx: sz.w / 2, ry: sz.h / 2, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, strokeDashArray: s.dash, _isShape: true }));
       return { ...res, hint: `to put a label INSIDE this shape call write_text with boxId="${res.id}" (auto-centered + auto-sized) — never with x,y` };
     }
     case 'draw_arrow': {
       const a = pctToScene(canvas, args.x1, args.y1);
       const b = pctToScene(canvas, args.x2, args.y2);
       const s = styleOf(args);
-      return place(new Path(arrowPath(a, b), { stroke: s.color, strokeWidth: s.strokeWidth, fill: '', _isShape: true }));
+      return place(new Path(arrowPath(a, b), { stroke: s.color, strokeWidth: s.strokeWidth, strokeDashArray: s.dash, fill: '', _isShape: true }));
     }
     case 'draw_polyline':
     case 'draw_polygon': {
@@ -397,7 +418,7 @@ export async function executeAction(name, args = {}) {
       if (raw.length < 2) return { ok: false, message: 'need at least 2 points (each {x, y} in percent)' };
       const scenePts = raw.map((pt) => pctToScene(canvas, pt.x, pt.y));
       const s = styleOf(args);
-      const poly = buildPoly(scenePts, { color: s.color, strokeWidth: s.strokeWidth, fill: closed ? s.fill : '' }, closed);
+      const poly = buildPoly(scenePts, { color: s.color, strokeWidth: s.strokeWidth, fill: closed ? s.fill : '', dashArray: s.dash }, closed);
       poly.set({ _isShape: true });
       // Anchor vertices near an existing shape's edge (default on) so the line
       // sticks to shapes when they move — pass anchor:false to opt out.
@@ -517,12 +538,19 @@ export async function executeAction(name, args = {}) {
       if (!o) return { ok: false, message: 'shape not found' };
       if (args.color != null) o.set({ stroke: String(args.color) });
       if (args.strokeWidth != null) o.set({ strokeWidth: num(args.strokeWidth, o.strokeWidth) });
+      if (args.lineStyle != null) o.set({ strokeDashArray: dashFor(String(args.lineStyle), o.strokeWidth) });
       if (args.fill != null || args.fillOpacity != null) {
         // Text keeps a solid fill (its colour); geometry gets an rgba fill.
         if (o.type === 'i-text' || o.type === 'text') {
           if (args.fill != null) o.set({ fill: String(args.fill) });
         } else {
-          o.set({ fill: toRgba(args.fill != null ? args.fill : o.fill, args.fillOpacity) });
+          // Opacity-only change: reuse the current fill's colour (parseColor
+          // also understands the rgba() string a previous styling produced).
+          const base = args.fill != null ? args.fill : o.fill;
+          if (args.fillOpacity != null && args.fill == null && !parseColor(String(base || ''))) {
+            return { ok: false, message: `cannot change opacity: current fill "${base || 'none'}" has no colour — pass fill too` };
+          }
+          o.set({ fill: toRgba(base, args.fillOpacity) });
         }
       }
       if (args.cornerRadius != null && o.type === 'rect') {
@@ -530,6 +558,18 @@ export async function executeAction(name, args = {}) {
         o.set({ rx: r, ry: r });
       }
       o.set({ dirty: true });
+      canvas.requestRenderAll();
+      return { ok: true, id: ensureId(o) };
+    }
+    case 'reorder_object': {
+      const o = resolveTarget(canvas, args);
+      if (!o) return { ok: false, message: 'shape not found' };
+      const mode = String(args.mode || 'front');
+      if (mode === 'front') canvas.bringObjectToFront(o);
+      else if (mode === 'back') canvas.sendObjectToBack(o);
+      else if (mode === 'forward') canvas.bringObjectForward(o);
+      else if (mode === 'backward') canvas.sendObjectBackwards(o);
+      else return { ok: false, message: 'mode must be front | back | forward | backward' };
       canvas.requestRenderAll();
       return { ok: true, id: ensureId(o) };
     }

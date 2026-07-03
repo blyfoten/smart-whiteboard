@@ -264,6 +264,48 @@ function detectPolyline(pts, bb) {
   if (idx.length > 12) return null; // implausibly many corners → not a clean polyline
 
   const v = idx.map((i) => pts[i]);
+
+  // Arrowhead ending: the stroke's last 1–3 segments are short and fold back
+  // sharply against the shaft — the hand-drawn V of an arrow tip. Strip them
+  // and flag the arrow; all the guards below then judge only the shaft.
+  let arrowEnd = false;
+  {
+    const total = polylineLength(v);
+    let maxSeg = 0;
+    for (let i = 1; i < v.length; i++) maxSeg = Math.max(maxSeg, dist(v[i - 1], v[i]));
+    // A wing must be clearly shorter than the shaft's dominant segment (a
+    // zig-zag of comparable segments is NOT a head, however sharp its turns).
+    const wingMax = Math.min(0.45 * maxSeg, 0.3 * total);
+    let end = v.length - 1;
+    let stripped = 0;
+    while (end >= 2 && stripped < 3) {
+      const wingLen = dist(v[end - 1], v[end]);
+      const turn = angleTurn(
+        v[end - 1].x - v[end - 2].x, v[end - 1].y - v[end - 2].y,
+        v[end].x - v[end - 1].x, v[end].y - v[end - 1].y
+      );
+      if (wingLen < wingMax && turn > (100 * Math.PI) / 180) {
+        end--;
+        stripped++;
+      } else {
+        break;
+      }
+    }
+    if (stripped > 0) {
+      arrowEnd = true;
+      v.splice(end + 1);
+      idx.splice(end + 1);
+    }
+  }
+
+  // A stripped head can leave a plain straight shaft → an arrow-ended line.
+  if (arrowEnd && v.length === 2) {
+    if (dist(v[0], v[1]) < MIN_SIZE) return null;
+    const s = snapLine(v[0], v[1]);
+    return { type: 'line', a: s.a, b: s.b, arrowEnd: true };
+  }
+  if (v.length < 3) return null;
+
   const minSeg = Math.max(MIN_SIZE * 0.6, 0.05 * diag);
   for (let i = 1; i < v.length; i++) {
     if (dist(v[i - 1], v[i]) < minSeg) return null; // reject tiny zig-zag noise
@@ -296,7 +338,7 @@ function detectPolyline(pts, bb) {
     if (maxDeviationFromChord(seg, pts[idx[k - 1]], pts[idx[k]]) > 0.14 * segLen + 4) return null;
   }
 
-  return { type: 'polyline', points: snapPolyline(v) };
+  return { type: 'polyline', points: snapPolyline(v), arrowEnd };
 }
 
 // A closed stroke that isn't a rectangle or ellipse → a clean polygon (a

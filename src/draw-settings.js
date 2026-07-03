@@ -14,9 +14,18 @@ const state = {
   fill: 'none',         // shape fill: 'none' or a hex colour
   fillOpacity: 0.3,
   cornerRadius: 0,      // rounded-rectangle radius (px)
+  lineStyle: 'solid',   // 'solid' | 'dashed' | 'dotted' (pen + shape outline)
   snapMove: 'off',      // align a moved selection to other objects ('on'/'off')
   snapNodeOrtho: 'off', // snap a dragged node so a near-ortho segment goes H/V
 };
+
+// The strokeDashArray for a line style at a given stroke width (null = solid).
+export function dashArrayFor(style, strokeWidth = 5) {
+  const w = Math.max(1, strokeWidth);
+  if (style === 'dashed') return [w * 3, w * 2];
+  if (style === 'dotted') return [Math.max(1, w * 0.4), w * 1.9];
+  return null;
+}
 
 function save() {
   setCookie(COOKIE, JSON.stringify(state));
@@ -34,6 +43,11 @@ export function setFillOpacity(v) { state.fillOpacity = Math.max(0, Math.min(1, 
 export function getCornerRadius() { return state.cornerRadius; }
 export function setCornerRadius(v) { state.cornerRadius = Math.max(0, v); save(); }
 
+export function getLineStyle() { return state.lineStyle; }
+export function setLineStyle(v) {
+  if (['solid', 'dashed', 'dotted'].includes(v)) { state.lineStyle = v; applyBrush(); save(); }
+}
+
 export function getSnapMove() { return state.snapMove; }
 export function setSnapMove(v) { state.snapMove = v; save(); }
 
@@ -42,7 +56,10 @@ export function setSnapNodeOrtho(v) { state.snapNodeOrtho = v; save(); }
 
 export function applyBrush() {
   const c = getCanvas();
-  if (c && c.freeDrawingBrush) c.freeDrawingBrush.color = state.color;
+  if (c && c.freeDrawingBrush) {
+    c.freeDrawingBrush.color = state.color;
+    c.freeDrawingBrush.strokeDashArray = dashArrayFor(state.lineStyle, c.freeDrawingBrush.width || 5);
+  }
 }
 
 function hexToRgba(hex, a) {

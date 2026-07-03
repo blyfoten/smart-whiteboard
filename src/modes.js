@@ -12,7 +12,7 @@ import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.j
 import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
 import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
 import { deleteActiveSelection } from './equation-menu.js';
-import { getDrawColor, computedShapeFill, getCornerRadius } from './draw-settings.js';
+import { getDrawColor, computedShapeFill, getCornerRadius, getLineStyle } from './draw-settings.js';
 import { toggleSubToolbar, showSubToolbar, isSubToolbarOpen } from './draw-toolbar.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
@@ -80,7 +80,7 @@ function _shouldBeautify() {
 // existing shape edge. The new shape isn't on the canvas yet, and its `points`
 // are still in scene coordinates (no transform applied), so we can read/write
 // them directly. Records the snapped target on the shape for later anchoring.
-function _snapEndpointsToEdges(shape) {
+function _snapEndpointsToEdges(shape, indices) {
   if (_edgeSnap !== 'on') return;
   const pts = shape.points;
   if (!pts || pts.length < 2) return;
@@ -90,7 +90,7 @@ function _snapEndpointsToEdges(shape) {
   const maxDist = EDGE_SNAP_PX / (_canvas.getZoom() || 1); // ~constant on screen
   let changed = false;
   const anchors = {};
-  [0, pts.length - 1].forEach((i) => {
+  (indices || [0, pts.length - 1]).forEach((i) => {
     const hit = snapPointToShapes(pts[i], targets, maxDist);
     if (hit) {
       pts[i] = hit.point;
@@ -170,6 +170,7 @@ function _onPathCreated(e) {
     color: getDrawColor(),
     fill: computedShapeFill(),
     cornerRadius: getCornerRadius(),
+    lineStyle: getLineStyle(),
   });
   if (!result) return;
 
@@ -178,8 +179,10 @@ function _onPathCreated(e) {
 
   // Edge snap: if an open polyline/line's start or end was drawn close to an
   // existing shape's outline, pull that endpoint onto the edge for a clean join.
+  // An arrow-ended polyline's LAST points are its arrowhead wings, not a free
+  // endpoint — snapping those would mangle the head, so only the start snaps.
   if (result.type === 'line' || result.type === 'polyline') {
-    _snapEndpointsToEdges(shape);
+    _snapEndpointsToEdges(shape, result.arrowEnd ? [0] : undefined);
   }
 
   // Replace the freehand stroke with the clean shape. Keep the stroke's own

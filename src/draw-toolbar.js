@@ -9,9 +9,16 @@ import {
   getShapeFill, setShapeFill,
   getFillOpacity, setFillOpacity,
   getCornerRadius, setCornerRadius,
+  getLineStyle, setLineStyle,
   getSnapMove, setSnapMove,
   getSnapNodeOrtho, setSnapNodeOrtho,
 } from './draw-settings.js';
+
+const LINE_STYLES = [
+  { key: 'solid', label: '—', title: 'Solid line' },
+  { key: 'dashed', label: '– –', title: 'Dashed line' },
+  { key: 'dotted', label: '· · ·', title: 'Dotted line' },
+];
 
 const SWATCHES = [
   { name: 'Black', value: '#111111' },
@@ -47,6 +54,14 @@ function colorRow() {
   picker.value = /^#[0-9a-f]{6}$/i.test(getDrawColor()) ? getDrawColor() : '#111111';
   picker.addEventListener('input', () => { setDrawColor(picker.value); render(_mode); });
   group.appendChild(picker);
+
+  group.appendChild(el('span', 'sub-label', 'Line'));
+  LINE_STYLES.forEach((s) => {
+    const chip = el('button', 'sub-chip' + (getLineStyle() === s.key ? ' active' : ''), s.label);
+    chip.title = s.title;
+    chip.addEventListener('click', () => { setLineStyle(s.key); render(_mode); });
+    group.appendChild(chip);
+  });
   return group;
 }
 

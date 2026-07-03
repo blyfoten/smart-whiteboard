@@ -7,6 +7,45 @@ import { getCanvas } from './canvas.js';
 import { drawGraph, solveToBoard, parseTypedEquation, replotGraph } from './api.js';
 import { getCurrentModel } from './ui.js';
 import { suspend as historySuspend, pushComposite } from './history.js';
+import { dashArrayFor } from './draw-settings.js';
+
+// Objects with an outline that a line style applies to.
+const STROKED_TYPES = ['line', 'polyline', 'polygon', 'rect', 'ellipse', 'circle', 'path'];
+
+function strokedObjects(canvas) {
+  return canvas.getActiveObjects().filter((o) => STROKED_TYPES.includes(o.type) && o.stroke);
+}
+
+// Reorder the selected object(s) in the stacking order.
+function reorderSelection(mode) {
+  const canvas = getCanvas();
+  if (!canvas) return;
+  const objs = canvas.getActiveObjects();
+  objs.forEach((o) => {
+    if (mode === 'front') canvas.bringObjectToFront(o);
+    else if (mode === 'back') canvas.sendObjectToBack(o);
+    else if (mode === 'forward') canvas.bringObjectForward(o);
+    else canvas.sendObjectBackwards(o);
+  });
+  canvas.requestRenderAll();
+  if (objs[0]) canvas.fire('object:modified', { target: objs[0] }); // autosave
+}
+
+// Apply a line style to every stroked object in the selection (one undo step).
+function applyLineStyle(style) {
+  const canvas = getCanvas();
+  if (!canvas) return;
+  const objs = strokedObjects(canvas);
+  if (!objs.length) return;
+  const before = objs.map((o) => ({ o, dash: o.strokeDashArray || null }));
+  objs.forEach((o) => o.set({ strokeDashArray: dashArrayFor(style, o.strokeWidth || 5), dirty: true }));
+  canvas.requestRenderAll();
+  canvas.fire('object:modified', { target: objs[0] }); // autosave
+  pushComposite(() => {
+    before.forEach(({ o, dash }) => o.set({ strokeDashArray: dash, dirty: true }));
+    canvas.requestRenderAll();
+  });
+}
 
 const TEXT_TYPES = ['i-text', 'text', 'textbox'];
 
@@ -332,6 +371,17 @@ export function showEquationMenu(targetObj, data) {
         if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
       })
     );
+  }
+
+  // Stacking order — useful whenever shapes overlap.
+  row.appendChild(makeButton('⬆', 'Bring to front', () => reorderSelection('front')));
+  row.appendChild(makeButton('⬇', 'Send to back', () => reorderSelection('back')));
+
+  // Line style — shown when the selection contains outlined shapes.
+  if (strokedObjects(canvas).length) {
+    row.appendChild(makeButton('—', 'Solid outline', () => applyLineStyle('solid')));
+    row.appendChild(makeButton('– –', 'Dashed outline', () => applyLineStyle('dashed')));
+    row.appendChild(makeButton('· ·', 'Dotted outline', () => applyLineStyle('dotted')));
   }
 
   const del = makeButton('🗑', 'Delete selection (Del)', deleteActiveSelection, 'em-del');
