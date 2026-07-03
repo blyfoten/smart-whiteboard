@@ -72,6 +72,31 @@ function anchorPolyVertices(canvas, poly, scenePts) {
 
 const round1 = (v) => Math.round(v * 10) / 10;
 
+// Resolve a rect/ellipse's top-left scene position: by CENTER when cx,cy are
+// given (the model usually thinks in centers — "on the cross", "around the
+// point"), else by top-left x,y. `sz` is the scene-unit size.
+function topLeftOf(canvas, args, sz) {
+  if (args.cx != null && args.cy != null) {
+    const c = pctToScene(canvas, args.cx, args.cy);
+    return { x: c.x - sz.w / 2, y: c.y - sz.h / 2 };
+  }
+  return pctToScene(canvas, args.x, args.y);
+}
+
+// Least-squares fit delta ≈ b + m*(coord - c0), c0 = mean target coord. Gives a
+// correction model ("your aim is off by b, plus m per unit away from c0") the
+// assistant can invert when placing by eye.
+function linFit(pairs) {
+  const n = pairs.length;
+  if (!n) return { b: 0, m: 0, c0: 50 };
+  const c0 = pairs.reduce((a, p) => a + p[0], 0) / n;
+  const dm = pairs.reduce((a, p) => a + p[1], 0) / n;
+  let varc = 0;
+  let cov = 0;
+  pairs.forEach(([c, d]) => { varc += (c - c0) * (c - c0); cov += (c - c0) * (d - dm); });
+  return { b: round1(dm), m: varc > 1e-6 ? Math.round((cov / varc) * 1000) / 1000 : 0, c0: round1(c0) };
+}
+
 // An object's ACTUAL bounding box in board percent — returned from every drawing
 // tool so the model gets immediate ground truth on where things really landed
 // (and can correct itself without waiting for the next video frame).
@@ -249,14 +274,14 @@ export async function executeAction(name, args = {}) {
       return place(new Line([a.x, a.y, b.x, b.y], { stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
     }
     case 'draw_rect': {
-      const p = pctToScene(canvas, args.x, args.y);
       const sz = pctLen(canvas, num(args.width, 10), num(args.height, 10));
+      const p = topLeftOf(canvas, args, sz);
       const s = styleOf(args);
       return place(new Rect({ left: p.x, top: p.y, width: sz.w, height: sz.h, rx: s.cornerRadius, ry: s.cornerRadius, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
     }
     case 'draw_ellipse': {
-      const p = pctToScene(canvas, args.x, args.y);
       const sz = pctLen(canvas, num(args.width, 10), num(args.height, 10));
+      const p = topLeftOf(canvas, args, sz);
       const s = styleOf(args);
       return place(new Ellipse({ left: p.x, top: p.y, rx: sz.w / 2, ry: sz.h / 2, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
     }
@@ -473,7 +498,7 @@ export async function executeAction(name, args = {}) {
         round: _calib.round,
         instructions:
           `Calibration round ${_calib.round}. The board now shows ${CALIB_CROSSES.length} red crosses and 1 dashed blue rectangle. ` +
-          'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (~3x3) centered EXACTLY on it, reading its position off the grid; ' +
+          'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read off the grid — cx,cy places the ellipse by its CENTER; ' +
           '(2) write the word CAL sized and centered to fit nicely inside the dashed blue rectangle — do NOT use boxId, place it by reading the video. ' +
           'When all marks are placed, call calibrate_check.',
       };
@@ -527,6 +552,16 @@ export async function executeAction(name, args = {}) {
         };
       }
 
+      // Fit a linear correction model per axis: how far off the aim is (offset)
+      // and how the miss grows across the board (scale/stretch).
+      const correction = {
+        x: linFit(hits.map((r) => [r.target.x, r.dx])),
+        y: linFit(hits.map((r) => [r.target.y, r.dy])),
+      };
+      const corrText =
+        `aim_x = intended_x - (${correction.x.b} + ${correction.x.m}*(intended_x - ${correction.x.c0})); ` +
+        `aim_y = intended_y - (${correction.y.b} + ${correction.y.m}*(intended_y - ${correction.y.c0}))`;
+
       const diagnostics = calibDiagnostics(canvas);
       const round = _calib.round;
 
@@ -535,7 +570,7 @@ export async function executeAction(name, args = {}) {
       historySuspend(() => marks.forEach((o) => canvas.remove(o)));
       canvas.requestRenderAll();
 
-      const summary = { ok: true, round, stats, perTarget, text: textReport, diagnostics };
+      const summary = { ok: true, round, stats, perTarget, text: textReport, correction, diagnostics };
 
       // Report card in the output panel — copy/paste-able for debugging.
       const rows = perTarget.map((r, i) =>
@@ -548,16 +583,17 @@ export async function executeAction(name, args = {}) {
         `<table border="1" cellpadding="3" style="border-collapse:collapse;font-size:12px;margin:4px 0">` +
         `<tr><th>target %</th><th>placed %</th><th>Δx, Δy</th><th>err</th></tr>${rows}</table>` +
         `Bias: Δx=${stats.meanDx}, Δy=${stats.meanDy} · mean err ${stats.meanErr} · max ${stats.maxErr} (percent units)<br>` +
+        `Correction model: <code>${corrText}</code><br>` +
         (textReport
           ? `Text: center off (${textReport.centerOffset.dx}, ${textReport.centerOffset.dy}), ` +
             `${textReport.fitsInBox ? 'fits in box ✔' : 'OVERFLOWS box ✘'}, height ${textReport.heightVsBox} of box<br>`
           : 'Text: no CAL text was placed<br>') +
-        `<pre style="font-size:11px;white-space:pre-wrap;margin:4px 0">${JSON.stringify({ stats, text: textReport, diagnostics }, null, 1)}</pre>`
+        `<pre style="font-size:11px;white-space:pre-wrap;margin:4px 0">${JSON.stringify({ stats, correction, text: textReport, diagnostics }, null, 1)}</pre>`
       );
 
       summary.advice = stats.meanErr > 3
-        ? `Placement is off by ~${stats.meanErr}%. Compensate: subtract the bias (${stats.meanDx}, ${stats.meanDy}) from your intended coordinates, call calibrate_start again and retry (max 3 rounds).`
-        : 'Good accuracy — calibration done. Briefly tell the user the mean error.';
+        ? `Placement is off by ~${stats.meanErr}%. From now on, whenever you place something by READING the video (not from get_objects/tool-result numbers), correct your aim with: ${corrText}. Then call calibrate_start again to verify (max 3 rounds).`
+        : `Good accuracy — calibration done. Keep applying this correction to eye-based placements: ${corrText}. Briefly tell the user the mean error.`;
       return summary;
     }
     case 'clear_board': {

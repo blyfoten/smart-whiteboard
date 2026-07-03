@@ -178,13 +178,21 @@ function captureFrameBase64() {
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     if (p > 0 && p < 100) {
-      // White halo + blue text so labels stay readable over any content.
+      // Labels on ALL four edges (x along top+bottom, y along left+right) so the
+      // model never has to trace a gridline far from a number — reading accuracy
+      // degrades with distance to the nearest label. White halo + blue text.
+      const label = String(p);
+      const lw = ctx.measureText(label).width;
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.fillText(String(p), x + 2, 1);
-      ctx.fillText(String(p), 2, y + 1);
+      ctx.fillText(label, x + 2, 1);
+      ctx.fillText(label, x + 2, h - 14);
+      ctx.fillText(label, 2, y + 1);
+      ctx.fillText(label, w - lw - 2, y + 1);
       ctx.fillStyle = 'rgba(0,80,200,0.95)';
-      ctx.fillText(String(p), x + 1, 0);
-      ctx.fillText(String(p), 1, y);
+      ctx.fillText(label, x + 1, 0);
+      ctx.fillText(label, x + 1, h - 15);
+      ctx.fillText(label, 1, y);
+      ctx.fillText(label, w - lw - 3, y);
     }
   }
   ctx.restore();
