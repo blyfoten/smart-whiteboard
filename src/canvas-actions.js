@@ -15,6 +15,8 @@ import { extractEquation, solveToBoard } from './api.js';
 import { getCurrentModel } from './ui.js';
 import { buildPoly } from './shapes.js';
 import { snapPointToShapes, toTargetLocal } from './edge-snap.js';
+import { suspend as historySuspend } from './history.js';
+import { appendToOutput } from './output.js';
 
 const STROKE = 'black';
 const STROKE_WIDTH = 4;
@@ -66,6 +68,58 @@ function anchorPolyVertices(canvas, poly, scenePts) {
     poly.setBoundingBox(true);
     poly.setCoords();
   }
+}
+
+const round1 = (v) => Math.round(v * 10) / 10;
+
+// An object's ACTUAL bounding box in board percent — returned from every drawing
+// tool so the model gets immediate ground truth on where things really landed
+// (and can correct itself without waiting for the next video frame).
+function bboxPct(canvas, o) {
+  o.setCoords();
+  const r = o.getBoundingRect();
+  const tl = sceneToPct(canvas, r.left, r.top);
+  const br = sceneToPct(canvas, r.left + r.width, r.top + r.height);
+  return { x: round1(tl.x), y: round1(tl.y), width: round1(br.x - tl.x), height: round1(br.y - tl.y) };
+}
+
+// ---- self-calibration --------------------------------------------------------
+//
+// calibrate_start puts reference targets on the board (red crosses at known
+// percent positions + a dashed text box); the assistant then draws marks where it
+// SEES them in the video frame; calibrate_check measures the placement error,
+// prints a report card to the output panel, cleans up, and returns the numbers so
+// the assistant can correct its aim and iterate.
+
+let _calib = null; // { crosses, box, targetObjs, beforeIds, round }
+
+const CALIB_CROSSES = [
+  { x: 15, y: 15 }, { x: 85, y: 15 }, { x: 50, y: 40 }, { x: 15, y: 85 }, { x: 85, y: 85 },
+];
+const CALIB_BOX = { x: 35, y: 60, w: 30, h: 18 };
+
+function calibCleanup(canvas) {
+  if (!_calib) return;
+  const gone = _calib.targetObjs.filter((o) => canvas.getObjects().includes(o));
+  if (gone.length) historySuspend(() => gone.forEach((o) => canvas.remove(o)));
+  _calib.targetObjs = [];
+}
+
+// Frame-capture + canvas geometry. Deterministic diagnostics for the report —
+// mismatches here (aspect, retina scaling) would skew everything the model sees.
+// MAX_FRAME_WIDTH mirrors voice.js.
+function calibDiagnostics(canvas) {
+  const el = canvas.lowerCanvasEl;
+  const t = vpt(canvas);
+  const scale = Math.min(1, 768 / el.width);
+  return {
+    cssSize: `${canvas.getWidth()}x${canvas.getHeight()}`,
+    backingStore: `${el.width}x${el.height}`,
+    devicePixelRatio: window.devicePixelRatio || 1,
+    zoom: Math.round(canvas.getZoom() * 100) / 100,
+    pan: [Math.round(t[4]), Math.round(t[5])],
+    streamedFrame: `${Math.round(el.width * scale)}x${Math.round(el.height * scale)}`,
+  };
 }
 
 // AI solve/steps need an LLM; math.js can't do symbolic work.
@@ -184,7 +238,7 @@ export async function executeAction(name, args = {}) {
   const place = (obj) => {
     canvas.add(obj);
     canvas.requestRenderAll();
-    return { ok: true, id: ensureId(obj) };
+    return { ok: true, id: ensureId(obj), bbox: bboxPct(canvas, obj) };
   };
 
   switch (name) {
@@ -227,10 +281,31 @@ export async function executeAction(name, args = {}) {
       return place(poly);
     }
     case 'write_text': {
-      const p = pctToScene(canvas, args.x, args.y);
-      const fontSize = Math.max(10, pctLen(canvas, 0, num(args.size, 6)).h);
       const color = args.color ? String(args.color) : STROKE;
-      return place(new IText(String(args.text || ''), { left: p.x, top: p.y, fill: color, fontSize, fontFamily: 'Caveat, cursive' }));
+      const text = new IText(String(args.text || ''), {
+        left: 0, top: 0, fill: color,
+        fontSize: Math.max(10, pctLen(canvas, 0, num(args.size, 6)).h),
+        fontFamily: 'Caveat, cursive',
+      });
+
+      // boxId: auto-fit the text inside an existing shape — centered, sized to
+      // fill ~80% of the box height but never overflowing its width.
+      const box = args.boxId != null ? findById(canvas, String(args.boxId)) : null;
+      if (args.boxId != null && !box) return { ok: false, message: 'boxId shape not found' };
+      if (box) {
+        const r = box.getBoundingRect();
+        text.set({ fontSize: Math.max(10, r.height * 0.8) });
+        const fit = Math.min((r.width * 0.85) / (text.width || 1), (r.height * 0.8) / (text.height || 1));
+        if (fit < 1) text.set({ fontSize: Math.max(10, text.fontSize * fit) });
+        text.set({
+          left: r.left + (r.width - text.width) / 2,
+          top: r.top + (r.height - text.height) / 2,
+        });
+      } else {
+        const p = pctToScene(canvas, num(args.x, 10), num(args.y, 10));
+        text.set({ left: p.x, top: p.y });
+      }
+      return place(text);
     }
     case 'plot_function': {
       const variable = String(args.variable || 'x');
@@ -288,7 +363,7 @@ export async function executeAction(name, args = {}) {
       o.set({ left: o.left + d.w, top: o.top + d.h });
       o.setCoords();
       canvas.requestRenderAll();
-      return { ok: true, id: ensureId(o) };
+      return { ok: true, id: ensureId(o), bbox: bboxPct(canvas, o) };
     }
     case 'resize_object':
     case 'scale_object': {
@@ -300,7 +375,7 @@ export async function executeAction(name, args = {}) {
         o.setCoords();
         canvas.requestRenderAll();
       }
-      return { ok: true, id: ensureId(o) };
+      return { ok: true, id: ensureId(o), bbox: bboxPct(canvas, o) };
     }
     case 'set_color': {
       const o = resolveTarget(canvas, args);
@@ -365,6 +440,125 @@ export async function executeAction(name, args = {}) {
       }
       const res = await solveToBoard(instruction, aiModel(), anchor, heading);
       return res && res.ok ? { ok: true, result: res.text } : { ok: false, message: (res && res.text) || 'solve failed' };
+    }
+    case 'calibrate_start': {
+      calibCleanup(canvas);
+      const targetObjs = [];
+      historySuspend(() => {
+        CALIB_CROSSES.forEach((c) => {
+          const p = pctToScene(canvas, c.x, c.y);
+          const arm = pctLen(canvas, 1.2, 0).w;
+          const cross = new Path(
+            `M ${p.x - arm} ${p.y} L ${p.x + arm} ${p.y} M ${p.x} ${p.y - arm} L ${p.x} ${p.y + arm}`,
+            { stroke: '#d11', strokeWidth: 2, fill: '', selectable: false, evented: false, excludeFromExport: true, _noHistory: true, _isCalib: true }
+          );
+          canvas.add(cross);
+          targetObjs.push(cross);
+        });
+        const tl = pctToScene(canvas, CALIB_BOX.x, CALIB_BOX.y);
+        const sz = pctLen(canvas, CALIB_BOX.w, CALIB_BOX.h);
+        const rect = new Rect({
+          left: tl.x, top: tl.y, width: sz.w, height: sz.h, fill: '',
+          stroke: '#15c', strokeWidth: 2, strokeDashArray: [6, 4],
+          selectable: false, evented: false, excludeFromExport: true, _noHistory: true, _isCalib: true,
+        });
+        canvas.add(rect);
+        targetObjs.push(rect);
+      });
+      canvas.requestRenderAll();
+      const beforeIds = new Set(canvas.getObjects().filter((o) => !o._isCalib).map((o) => ensureId(o)));
+      _calib = { targetObjs, beforeIds, round: _calib ? _calib.round + 1 : 1 };
+      return {
+        ok: true,
+        round: _calib.round,
+        instructions:
+          `Calibration round ${_calib.round}. The board now shows ${CALIB_CROSSES.length} red crosses and 1 dashed blue rectangle. ` +
+          'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (~3x3) centered EXACTLY on it, reading its position off the grid; ' +
+          '(2) write the word CAL sized and centered to fit nicely inside the dashed blue rectangle — do NOT use boxId, place it by reading the video. ' +
+          'When all marks are placed, call calibrate_check.',
+      };
+    }
+    case 'calibrate_check': {
+      if (!_calib) return { ok: false, message: 'call calibrate_start first' };
+      const marks = canvas.getObjects().filter((o) => !o._isCalib && o._aiId && !_calib.beforeIds.has(o._aiId));
+      const texts = marks.filter((o) => o.type === 'i-text' || o.type === 'text');
+      const dots = marks.filter((o) => o.type !== 'i-text' && o.type !== 'text');
+
+      // Pair each cross with the nearest unused mark and measure the miss.
+      const used = new Set();
+      const perTarget = CALIB_CROSSES.map((c) => {
+        let best = null;
+        let bestD = Infinity;
+        for (const m of dots) {
+          if (used.has(m)) continue;
+          const ctr = m.getCenterPoint();
+          const p = sceneToPct(canvas, ctr.x, ctr.y);
+          const d = Math.hypot(p.x - c.x, p.y - c.y);
+          if (d < bestD) { bestD = d; best = { m, p }; }
+        }
+        if (!best) return { target: c, hit: null };
+        used.add(best.m);
+        return { target: c, hit: { x: round1(best.p.x), y: round1(best.p.y) }, dx: round1(best.p.x - c.x), dy: round1(best.p.y - c.y), err: round1(bestD) };
+      });
+
+      const hits = perTarget.filter((r) => r.hit);
+      const mean = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+      const stats = {
+        marksPlaced: dots.length,
+        targetsHit: hits.length,
+        meanDx: round1(mean(hits.map((r) => r.dx))),
+        meanDy: round1(mean(hits.map((r) => r.dy))),
+        meanErr: round1(mean(hits.map((r) => r.err))),
+        maxErr: round1(hits.reduce((a, r) => Math.max(a, r.err), 0)),
+      };
+
+      // Text test: how well does CAL sit inside the dashed box?
+      let textReport = null;
+      if (texts.length) {
+        const b = bboxPct(canvas, texts[0]);
+        const boxCx = CALIB_BOX.x + CALIB_BOX.w / 2;
+        const boxCy = CALIB_BOX.y + CALIB_BOX.h / 2;
+        textReport = {
+          bbox: b,
+          centerOffset: { dx: round1(b.x + b.width / 2 - boxCx), dy: round1(b.y + b.height / 2 - boxCy) },
+          fitsInBox: b.x >= CALIB_BOX.x && b.y >= CALIB_BOX.y &&
+            b.x + b.width <= CALIB_BOX.x + CALIB_BOX.w && b.y + b.height <= CALIB_BOX.y + CALIB_BOX.h,
+          heightVsBox: round1((b.height / CALIB_BOX.h) * 100) + '%',
+        };
+      }
+
+      const diagnostics = calibDiagnostics(canvas);
+      const round = _calib.round;
+
+      // Clean the board: remove targets AND the assistant's marks, off the record.
+      calibCleanup(canvas);
+      historySuspend(() => marks.forEach((o) => canvas.remove(o)));
+      canvas.requestRenderAll();
+
+      const summary = { ok: true, round, stats, perTarget, text: textReport, diagnostics };
+
+      // Report card in the output panel — copy/paste-able for debugging.
+      const rows = perTarget.map((r, i) =>
+        r.hit
+          ? `<tr><td>#${i + 1} (${r.target.x},${r.target.y})</td><td>(${r.hit.x},${r.hit.y})</td><td>${r.dx}, ${r.dy}</td><td>${r.err}</td></tr>`
+          : `<tr><td>#${i + 1} (${r.target.x},${r.target.y})</td><td colspan="3">missed (no mark)</td></tr>`
+      ).join('');
+      appendToOutput(
+        `<b>🎯 Voice-agent calibration — round ${round}</b><br>` +
+        `<table border="1" cellpadding="3" style="border-collapse:collapse;font-size:12px;margin:4px 0">` +
+        `<tr><th>target %</th><th>placed %</th><th>Δx, Δy</th><th>err</th></tr>${rows}</table>` +
+        `Bias: Δx=${stats.meanDx}, Δy=${stats.meanDy} · mean err ${stats.meanErr} · max ${stats.maxErr} (percent units)<br>` +
+        (textReport
+          ? `Text: center off (${textReport.centerOffset.dx}, ${textReport.centerOffset.dy}), ` +
+            `${textReport.fitsInBox ? 'fits in box ✔' : 'OVERFLOWS box ✘'}, height ${textReport.heightVsBox} of box<br>`
+          : 'Text: no CAL text was placed<br>') +
+        `<pre style="font-size:11px;white-space:pre-wrap;margin:4px 0">${JSON.stringify({ stats, text: textReport, diagnostics }, null, 1)}</pre>`
+      );
+
+      summary.advice = stats.meanErr > 3
+        ? `Placement is off by ~${stats.meanErr}%. Compensate: subtract the bias (${stats.meanDx}, ${stats.meanDy}) from your intended coordinates, call calibrate_start again and retry (max 3 rounds).`
+        : 'Good accuracy — calibration done. Briefly tell the user the mean error.';
+      return summary;
     }
     case 'clear_board': {
       clearCanvas(canvas);
