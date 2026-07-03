@@ -104,14 +104,17 @@ function median(arr) {
   return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
 }
 
-// Robust per-axis fit: discrete misreads (e.g. snapping to the wrong gridline,
-// a ~5-unit slip) must be reported as SLIPS, not averaged into the bias/slope —
-// a least-squares fit over outliers would hand the assistant a bogus skew model.
+// Robust per-axis fit. Outliers are judged against the LINE, not the median:
+// a smooth stretch (delta growing linearly across the board — a real, correctable
+// distortion in how the model reads the grid) must be captured as the model,
+// while discrete misreads (snapping to a wrong gridline) are far off the line
+// and get flagged as SLIPS and excluded from the fit.
 function axisFit(pairs) {
   if (!pairs.length) return { b: 0, m: 0, c0: 50, slips: 0 };
-  const med = median(pairs.map((p) => p[1]));
-  const inliers = pairs.filter((p) => Math.abs(p[1] - med) <= 2);
-  const fit = linFit(inliers.length >= 2 ? inliers : pairs);
+  const resid = (fit, p) => p[1] - (fit.b + fit.m * (p[0] - fit.c0));
+  let fit = linFit(pairs);
+  const inliers = pairs.filter((p) => Math.abs(resid(fit, p)) <= 2);
+  if (inliers.length >= 3 && inliers.length < pairs.length) fit = linFit(inliers);
   return { ...fit, slips: pairs.length - inliers.length };
 }
 
@@ -136,8 +139,11 @@ function bboxPct(canvas, o) {
 
 let _calib = null; // { crosses, box, targetObjs, beforeIds, round }
 
+// 7 targets over 5+ DISTINCT values per axis: with repeated coords a discrete
+// gridline snap and a genuine linear stretch are indistinguishable to the fit.
 const CALIB_CROSSES = [
   { x: 15, y: 15 }, { x: 85, y: 15 }, { x: 50, y: 40 }, { x: 15, y: 85 }, { x: 85, y: 85 },
+  { x: 35, y: 25 }, { x: 70, y: 70 },
 ];
 const CALIB_BOX = { x: 35, y: 60, w: 30, h: 18 };
 
@@ -580,12 +586,17 @@ export async function executeAction(name, args = {}) {
         y: axisFit(hits.map((r) => [r.target.y, r.dy])),
       };
       hits.forEach((r) => {
-        r.slip = Math.abs(r.dx - correction.x.b) > 2 || Math.abs(r.dy - correction.y.b) > 2;
+        const rx = r.dx - (correction.x.b + correction.x.m * (r.target.x - correction.x.c0));
+        const ry = r.dy - (correction.y.b + correction.y.m * (r.target.y - correction.y.c0));
+        r.slip = Math.abs(rx) > 2 || Math.abs(ry) > 2;
+        r.resid = round1(Math.hypot(rx, ry));
       });
       const slips = hits.filter((r) => r.slip).length;
       const cleanHits = hits.filter((r) => !r.slip);
       stats.slips = slips;
       stats.cleanErr = round1(mean(cleanHits.map((r) => r.err)));
+      // Expected error if the assistant applies the correction model.
+      stats.fitResidual = round1(mean(cleanHits.map((r) => r.resid)));
       const corrText =
         `aim_x = intended_x - (${correction.x.b} + ${correction.x.m}*(intended_x - ${correction.x.c0})); ` +
         `aim_y = intended_y - (${correction.y.b} + ${correction.y.m}*(intended_y - ${correction.y.c0}))`;
@@ -606,6 +617,14 @@ export async function executeAction(name, args = {}) {
 
       const summary = { ok: true, round, stats, perTarget, text: textReport, correction, diagnostics };
 
+      // Persist the measurement so future voice sessions start pre-calibrated
+      // (voice.js injects it as a context note right after connecting).
+      if (!slips && hits.length >= 4) {
+        try {
+          localStorage.setItem('sw_voicecal', JSON.stringify({ corrText, correction, stats, round, when: Date.now() }));
+        } catch (e) { /* storage unavailable — session-only calibration */ }
+      }
+
       // Report card in the output panel — copy/paste-able for debugging.
       const rows = perTarget.map((r, i) =>
         r.hit
@@ -616,7 +635,7 @@ export async function executeAction(name, args = {}) {
         `<b>🎯 Voice-agent calibration — round ${round}</b><br>` +
         `<table border="1" cellpadding="3" style="border-collapse:collapse;font-size:12px;margin:4px 0">` +
         `<tr><th>target %</th><th>placed %</th><th>Δx, Δy</th><th>err</th></tr>${rows}</table>` +
-        `Bias (robust): Δx=${correction.x.b}, Δy=${correction.y.b} · clean err ${stats.cleanErr} · ${slips} slipped · raw mean ${stats.meanErr} · max ${stats.maxErr} (percent units)<br>` +
+        `Bias (robust): Δx=${correction.x.b}, Δy=${correction.y.b} · clean err ${stats.cleanErr} · after-correction ~${stats.fitResidual} · ${slips} slipped · raw mean ${stats.meanErr} · max ${stats.maxErr} (percent units)<br>` +
         `Correction model: <code>${corrText}</code><br>` +
         (textReport
           ? `Text: center off (${textReport.centerOffset.dx}, ${textReport.centerOffset.dy}), ` +
@@ -626,10 +645,10 @@ export async function executeAction(name, args = {}) {
       );
 
       summary.advice = slips > 0
-        ? `Your aim is fine (clean marks average ${stats.cleanErr}% error) but ${slips} mark(s) SLIPPED to a wrong gridline — a misread, not a bias. Remember: strong numbered lines are the 10s, thin faint lines are the 5s (15, 25...), and a target can sit ON a 5-line or between lines. Call calibrate_start again and read each position to the nearest 1 before drawing; do not snap to the nearest numbered line.`
-        : (stats.cleanErr > 3
-          ? `Placement is off by ~${stats.cleanErr}%. From now on, whenever you place something by READING the video (not from get_objects/tool-result numbers), correct your aim with: ${corrText}. Then call calibrate_start again to verify (max 3 rounds).`
-          : `Good accuracy — calibration done. Keep applying this correction to eye-based placements: ${corrText}. Briefly tell the user the mean error.`);
+        ? `${slips} mark(s) SLIPPED to a wrong gridline (way off the trend of your other marks) — a misread, not a bias. Remember: strong numbered lines are the 10s, thin faint lines are the 5s (15, 25...), and a target can sit ON a 5-line or between lines. Call calibrate_start again and read each position to the nearest 1 before drawing; do not snap to the nearest numbered line.`
+        : (stats.meanErr <= 1.5
+          ? `Excellent — raw aim within ~${stats.meanErr}%. Calibration done; no correction needed. Briefly tell the user the mean error.`
+          : `A systematic distortion in your grid reading was measured (raw error ${stats.meanErr}%, expected ~${stats.fitResidual}% after correction). From now on, whenever you place something by READING the video (not from get_objects/tool-result numbers), correct your aim with: ${corrText}. Call calibrate_start once more to verify while applying it (max 3 rounds).`);
       return summary;
     }
     case 'clear_board': {

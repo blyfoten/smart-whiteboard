@@ -275,6 +275,21 @@ async function start() {
     switch (msg.type) {
       case 'ready':
         setStatus('🎤 Voice: listening — speak now');
+        // A stored calibration (from calibrate_check) primes the new session so
+        // the assistant's eye-based aim is corrected without re-calibrating.
+        try {
+          const cal = JSON.parse(localStorage.getItem('sw_voicecal') || 'null');
+          if (cal && cal.corrText && ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({
+              type: 'text',
+              data:
+                'SYSTEM NOTE (silent context — not the user speaking, do not mention it): a previous ' +
+                'calibration measured your placement distortion on this board. Whenever you place ' +
+                'something by READING the video frame, correct your aim with: ' + cal.corrText + '. ' +
+                'Never apply this to coordinates from get_objects or tool results — those are exact.',
+            }));
+          }
+        } catch (e) { /* ignore bad stored value */ }
         if (!hintShown) {
           hintShown = true;
           appendToOutput(
