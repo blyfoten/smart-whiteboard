@@ -148,7 +148,9 @@ function stopPlayback() {
 
 // ---- video frame capture ----------------------------------------------------
 
-function captureFrameBase64() {
+// Exported for the ⚙ Developer "Save AI camera frame" button — downloads exactly
+// what the assistant sees (board + coordinate grid) for placement debugging.
+export function captureFrameBase64() {
   const canvas = getCanvas();
   if (!canvas || !canvas.lowerCanvasEl) return null;
   const srcEl = canvas.lowerCanvasEl;
@@ -171,6 +173,18 @@ function captureFrameBase64() {
   ctx.lineWidth = 1;
   ctx.font = 'bold 13px sans-serif';
   ctx.textBaseline = 'top';
+  // Faint dotted lines at the 5s: a position halfway between labeled lines is
+  // where the model most often misreads ("85" snapping to "80"), so give the
+  // midpoints a visible line of their own.
+  ctx.strokeStyle = 'rgba(0,120,255,0.14)';
+  ctx.setLineDash([2, 4]);
+  for (let p = 5; p < 100; p += 10) {
+    const x = (p / 100) * w;
+    const y = (p / 100) * h;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+  ctx.setLineDash([]);
   for (let p = 0; p <= 100; p += 10) {
     const x = (p / 100) * w;
     const y = (p / 100) * h;

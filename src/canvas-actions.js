@@ -97,6 +97,24 @@ function linFit(pairs) {
   return { b: round1(dm), m: varc > 1e-6 ? Math.round((cov / varc) * 1000) / 1000 : 0, c0: round1(c0) };
 }
 
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const n = s.length;
+  return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+}
+
+// Robust per-axis fit: discrete misreads (e.g. snapping to the wrong gridline,
+// a ~5-unit slip) must be reported as SLIPS, not averaged into the bias/slope —
+// a least-squares fit over outliers would hand the assistant a bogus skew model.
+function axisFit(pairs) {
+  if (!pairs.length) return { b: 0, m: 0, c0: 50, slips: 0 };
+  const med = median(pairs.map((p) => p[1]));
+  const inliers = pairs.filter((p) => Math.abs(p[1] - med) <= 2);
+  const fit = linFit(inliers.length >= 2 ? inliers : pairs);
+  return { ...fit, slips: pairs.length - inliers.length };
+}
+
 // An object's ACTUAL bounding box in board percent — returned from every drawing
 // tool so the model gets immediate ground truth on where things really landed
 // (and can correct itself without waiting for the next video frame).
@@ -125,9 +143,11 @@ const CALIB_BOX = { x: 35, y: 60, w: 30, h: 18 };
 
 function calibCleanup(canvas) {
   if (!_calib) return;
-  const gone = _calib.targetObjs.filter((o) => canvas.getObjects().includes(o));
+  const leftovers = [..._calib.targetObjs, ...(_calib.keptMarks || [])];
+  const gone = leftovers.filter((o) => canvas.getObjects().includes(o));
   if (gone.length) historySuspend(() => gone.forEach((o) => canvas.remove(o)));
   _calib.targetObjs = [];
+  _calib.keptMarks = [];
 }
 
 // Frame-capture + canvas geometry. Deterministic diagnostics for the report —
@@ -498,8 +518,9 @@ export async function executeAction(name, args = {}) {
         round: _calib.round,
         instructions:
           `Calibration round ${_calib.round}. The board now shows ${CALIB_CROSSES.length} red crosses and 1 dashed blue rectangle. ` +
-          'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read off the grid — cx,cy places the ellipse by its CENTER; ' +
-          '(2) write the word CAL sized and centered to fit nicely inside the dashed blue rectangle — do NOT use boxId, place it by reading the video. ' +
+          'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read off the grid — cx,cy places the ellipse by its CENTER. ' +
+          'Solid gridlines mark the 10s, faint dotted lines mark the 5s; a cross can sit BETWEEN lines, so read each coordinate to the nearest 1 — never snap to the nearest labeled line. ' +
+          '(2) Write the word CAL centered in the dashed blue rectangle, sized so the text is roughly 70% of the box height — do NOT use boxId, place it by reading the video. ' +
           'When all marks are placed, call calibrate_check.',
       };
     }
@@ -552,12 +573,19 @@ export async function executeAction(name, args = {}) {
         };
       }
 
-      // Fit a linear correction model per axis: how far off the aim is (offset)
-      // and how the miss grows across the board (scale/stretch).
+      // Fit a robust linear correction model per axis (outlier slips excluded):
+      // how far off the aim is (offset) and how the miss grows across the board.
       const correction = {
-        x: linFit(hits.map((r) => [r.target.x, r.dx])),
-        y: linFit(hits.map((r) => [r.target.y, r.dy])),
+        x: axisFit(hits.map((r) => [r.target.x, r.dx])),
+        y: axisFit(hits.map((r) => [r.target.y, r.dy])),
       };
+      hits.forEach((r) => {
+        r.slip = Math.abs(r.dx - correction.x.b) > 2 || Math.abs(r.dy - correction.y.b) > 2;
+      });
+      const slips = hits.filter((r) => r.slip).length;
+      const cleanHits = hits.filter((r) => !r.slip);
+      stats.slips = slips;
+      stats.cleanErr = round1(mean(cleanHits.map((r) => r.err)));
       const corrText =
         `aim_x = intended_x - (${correction.x.b} + ${correction.x.m}*(intended_x - ${correction.x.c0})); ` +
         `aim_y = intended_y - (${correction.y.b} + ${correction.y.m}*(intended_y - ${correction.y.c0}))`;
@@ -565,9 +593,15 @@ export async function executeAction(name, args = {}) {
       const diagnostics = calibDiagnostics(canvas);
       const round = _calib.round;
 
-      // Clean the board: remove targets AND the assistant's marks, off the record.
-      calibCleanup(canvas);
-      historySuspend(() => marks.forEach((o) => canvas.remove(o)));
+      // Clean the board: remove targets AND the assistant's marks, off the
+      // record. keep=true leaves everything visible (e.g. for a screenshot);
+      // the next calibrate_start still starts from a clean slate.
+      if (args.keep) {
+        _calib.keptMarks = marks; // swept by the next calibrate_start
+      } else {
+        calibCleanup(canvas);
+        historySuspend(() => marks.forEach((o) => canvas.remove(o)));
+      }
       canvas.requestRenderAll();
 
       const summary = { ok: true, round, stats, perTarget, text: textReport, correction, diagnostics };
@@ -575,14 +609,14 @@ export async function executeAction(name, args = {}) {
       // Report card in the output panel — copy/paste-able for debugging.
       const rows = perTarget.map((r, i) =>
         r.hit
-          ? `<tr><td>#${i + 1} (${r.target.x},${r.target.y})</td><td>(${r.hit.x},${r.hit.y})</td><td>${r.dx}, ${r.dy}</td><td>${r.err}</td></tr>`
+          ? `<tr><td>#${i + 1} (${r.target.x},${r.target.y})</td><td>(${r.hit.x},${r.hit.y})</td><td>${r.dx}, ${r.dy}</td><td>${r.err}${r.slip ? ' ⚠ slip' : ''}</td></tr>`
           : `<tr><td>#${i + 1} (${r.target.x},${r.target.y})</td><td colspan="3">missed (no mark)</td></tr>`
       ).join('');
       appendToOutput(
         `<b>🎯 Voice-agent calibration — round ${round}</b><br>` +
         `<table border="1" cellpadding="3" style="border-collapse:collapse;font-size:12px;margin:4px 0">` +
         `<tr><th>target %</th><th>placed %</th><th>Δx, Δy</th><th>err</th></tr>${rows}</table>` +
-        `Bias: Δx=${stats.meanDx}, Δy=${stats.meanDy} · mean err ${stats.meanErr} · max ${stats.maxErr} (percent units)<br>` +
+        `Bias (robust): Δx=${correction.x.b}, Δy=${correction.y.b} · clean err ${stats.cleanErr} · ${slips} slipped · raw mean ${stats.meanErr} · max ${stats.maxErr} (percent units)<br>` +
         `Correction model: <code>${corrText}</code><br>` +
         (textReport
           ? `Text: center off (${textReport.centerOffset.dx}, ${textReport.centerOffset.dy}), ` +
@@ -591,9 +625,11 @@ export async function executeAction(name, args = {}) {
         `<pre style="font-size:11px;white-space:pre-wrap;margin:4px 0">${JSON.stringify({ stats, correction, text: textReport, diagnostics }, null, 1)}</pre>`
       );
 
-      summary.advice = stats.meanErr > 3
-        ? `Placement is off by ~${stats.meanErr}%. From now on, whenever you place something by READING the video (not from get_objects/tool-result numbers), correct your aim with: ${corrText}. Then call calibrate_start again to verify (max 3 rounds).`
-        : `Good accuracy — calibration done. Keep applying this correction to eye-based placements: ${corrText}. Briefly tell the user the mean error.`;
+      summary.advice = slips > 0
+        ? `Your aim is fine (clean marks average ${stats.cleanErr}% error) but ${slips} mark(s) SLIPPED to a wrong gridline — a misread, not a bias. Remember: solid lines are the 10s, faint dotted lines are the 5s, and a target can sit BETWEEN lines. Call calibrate_start again and read each position to the nearest 1 before drawing; do not snap to the nearest labeled line.`
+        : (stats.cleanErr > 3
+          ? `Placement is off by ~${stats.cleanErr}%. From now on, whenever you place something by READING the video (not from get_objects/tool-result numbers), correct your aim with: ${corrText}. Then call calibrate_start again to verify (max 3 rounds).`
+          : `Good accuracy — calibration done. Keep applying this correction to eye-based placements: ${corrText}. Briefly tell the user the mean error.`);
       return summary;
     }
     case 'clear_board': {

@@ -6,6 +6,7 @@ import { solveEquationFromText, extractEquation, analyzeRegionInk, analyzeText, 
 import { startRegionSelect, inkInRegion } from './region-select.js';
 import { getDrawColor } from './draw-settings.js';
 import { toggleRecognition } from './speech.js';
+import { captureFrameBase64 } from './voice.js';
 
 let currentModel = 'math';
 
@@ -218,6 +219,19 @@ export function initializeEventListeners() {
     forceSolveBtn.addEventListener('click', () => {
       const equation = prompt('Enter equation to solve (e.g. x^2 + 3*x - 5 = 0):');
       if (equation) solveEquationFromText(equation);
+    });
+  }
+
+  // Download exactly what the voice assistant sees (board + coordinate grid).
+  const aiFrameBtn = document.getElementById('ai-frame-btn');
+  if (aiFrameBtn) {
+    aiFrameBtn.addEventListener('click', () => {
+      const b64 = captureFrameBase64();
+      if (!b64) return;
+      const link = document.createElement('a');
+      link.download = `ai-frame-${Date.now()}.jpg`;
+      link.href = 'data:image/jpeg;base64,' + b64;
+      link.click();
     });
   }
 }
