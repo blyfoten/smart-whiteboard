@@ -374,13 +374,15 @@ export async function executeAction(name, args = {}) {
       const sz = pctLen(canvas, num(args.width, 10), num(args.height, 10));
       const p = topLeftOf(canvas, args, sz);
       const s = styleOf(args);
-      return place(new Rect({ left: p.x, top: p.y, width: sz.w, height: sz.h, rx: s.cornerRadius, ry: s.cornerRadius, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
+      const res = place(new Rect({ left: p.x, top: p.y, width: sz.w, height: sz.h, rx: s.cornerRadius, ry: s.cornerRadius, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
+      return { ...res, hint: `to put a label INSIDE this shape call write_text with boxId="${res.id}" (auto-centered + auto-sized) — never with x,y` };
     }
     case 'draw_ellipse': {
       const sz = pctLen(canvas, num(args.width, 10), num(args.height, 10));
       const p = topLeftOf(canvas, args, sz);
       const s = styleOf(args);
-      return place(new Ellipse({ left: p.x, top: p.y, rx: sz.w / 2, ry: sz.h / 2, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
+      const res = place(new Ellipse({ left: p.x, top: p.y, rx: sz.w / 2, ry: sz.h / 2, fill: s.fill || 'transparent', stroke: s.color, strokeWidth: s.strokeWidth, _isShape: true }));
+      return { ...res, hint: `to put a label INSIDE this shape call write_text with boxId="${res.id}" (auto-centered + auto-sized) — never with x,y` };
     }
     case 'draw_arrow': {
       const a = pctToScene(canvas, args.x1, args.y1);
