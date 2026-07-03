@@ -138,6 +138,7 @@ function bboxPct(canvas, o) {
 // the assistant can correct its aim and iterate.
 
 let _calib = null; // { crosses, box, targetObjs, beforeIds, round }
+let _lastModel = null; // latest ABSOLUTE correction model (see calibrate_check)
 
 // 7 targets over 5+ DISTINCT values per axis: with repeated coords a discrete
 // gridline snap and a genuine linear stretch are indistinguishable to the fit.
@@ -531,7 +532,8 @@ export async function executeAction(name, args = {}) {
           'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read off the grid — cx,cy places the ellipse by its CENTER. ' +
           'Strong NUMBERED gridlines mark the 10s; thin faint lines mark the 5s (15, 25, 35...). A cross often sits ON a thin 5-line or between lines — read each coordinate to the nearest 1, never snap to the nearest numbered line. ' +
           '(2) Write the word CAL with cx,cy set to the CENTER of the dashed blue rectangle as you read it off the grid, size roughly 70% of the box height — do NOT use boxId, place it by reading the video. ' +
-          'When all marks are placed, call calibrate_check.',
+          'IMPORTANT: cx,cy is where the MIDDLE of the ellipse/text will land — pass the target point directly, never pre-offset it by half the size (the tool centers for you). ' +
+          'When all marks are placed, call calibrate_check (pass appliedCorrection=true if you aimed using a correction model).',
       };
     }
     case 'calibrate_check': {
@@ -589,6 +591,25 @@ export async function executeAction(name, args = {}) {
         x: axisFit(hits.map((r) => [r.target.x, r.dx])),
         y: axisFit(hits.map((r) => [r.target.y, r.dy])),
       };
+
+      // Corrections are stored ABSOLUTE (raw eye-read -> target). If the
+      // assistant aimed this round WITH a correction applied
+      // (appliedCorrection=true), this measurement is only the residual on top
+      // of that model — compose them, or a perfect verification round would
+      // overwrite the stored model with "no correction needed".
+      const norm = (f) => ({ b: round1(f.b + f.m * (50 - f.c0)), m: f.m, c0: 50 });
+      const addFits = (a, b2) => ({ b: round1(a.b + b2.b), m: Math.round((a.m + b2.m) * 1000) / 1000, c0: 50 });
+      let absolute = { x: norm(correction.x), y: norm(correction.y) };
+      if (args.appliedCorrection === true) {
+        let prev = _lastModel;
+        if (!prev) {
+          try { prev = (JSON.parse(localStorage.getItem('sw_voicecal') || 'null') || {}).absolute || null; } catch (e) { prev = null; }
+        }
+        if (prev && prev.x && prev.y) {
+          absolute = { x: addFits(norm(prev.x), absolute.x), y: addFits(norm(prev.y), absolute.y) };
+        }
+      }
+      _lastModel = absolute;
       hits.forEach((r) => {
         const rx = r.dx - (correction.x.b + correction.x.m * (r.target.x - correction.x.c0));
         const ry = r.dy - (correction.y.b + correction.y.m * (r.target.y - correction.y.c0));
@@ -602,8 +623,8 @@ export async function executeAction(name, args = {}) {
       // Expected error if the assistant applies the correction model.
       stats.fitResidual = round1(mean(cleanHits.map((r) => r.resid)));
       const corrText =
-        `aim_x = intended_x - (${correction.x.b} + ${correction.x.m}*(intended_x - ${correction.x.c0})); ` +
-        `aim_y = intended_y - (${correction.y.b} + ${correction.y.m}*(intended_y - ${correction.y.c0}))`;
+        `aim_x = intended_x - (${absolute.x.b} + ${absolute.x.m}*(intended_x - 50)); ` +
+        `aim_y = intended_y - (${absolute.y.b} + ${absolute.y.m}*(intended_y - 50))`;
 
       const diagnostics = calibDiagnostics(canvas);
       const round = _calib.round;
@@ -619,13 +640,13 @@ export async function executeAction(name, args = {}) {
       }
       canvas.requestRenderAll();
 
-      const summary = { ok: true, round, stats, perTarget, text: textReport, correction, diagnostics };
+      const summary = { ok: true, round, stats, perTarget, text: textReport, correction, absolute, diagnostics };
 
-      // Persist the measurement so future voice sessions start pre-calibrated
+      // Persist the ABSOLUTE model so future voice sessions start pre-calibrated
       // (voice.js injects it as a context note right after connecting).
       if (!slips && hits.length >= 4) {
         try {
-          localStorage.setItem('sw_voicecal', JSON.stringify({ corrText, correction, stats, round, when: Date.now() }));
+          localStorage.setItem('sw_voicecal', JSON.stringify({ corrText, absolute, measured: correction, stats, round, when: Date.now() }));
         } catch (e) { /* storage unavailable — session-only calibration */ }
       }
 
@@ -645,14 +666,14 @@ export async function executeAction(name, args = {}) {
           ? `Text: center off (${textReport.centerOffset.dx}, ${textReport.centerOffset.dy}), ` +
             `${textReport.fitsInBox ? 'fits in box ✔' : 'OVERFLOWS box ✘'}, height ${textReport.heightVsBox} of box<br>`
           : 'Text: no CAL text was placed<br>') +
-        `<pre style="font-size:11px;white-space:pre-wrap;margin:4px 0">${JSON.stringify({ stats, correction, text: textReport, diagnostics }, null, 1)}</pre>`
+        `<pre style="font-size:11px;white-space:pre-wrap;margin:4px 0">${JSON.stringify({ stats, correction: { measured: correction, absolute }, text: textReport, diagnostics }, null, 1)}</pre>`
       );
 
       summary.advice = slips > 0
         ? `${slips} mark(s) SLIPPED to a wrong gridline (way off the trend of your other marks) — a misread, not a bias. Remember: strong numbered lines are the 10s, thin faint lines are the 5s (15, 25...), and a target can sit ON a 5-line or between lines. Call calibrate_start again and read each position to the nearest 1 before drawing; do not snap to the nearest numbered line.`
         : (stats.meanErr <= 1.5
           ? `Excellent — raw aim within ~${stats.meanErr}%. Calibration done; no correction needed. Briefly tell the user the mean error.`
-          : `A systematic distortion in your grid reading was measured (raw error ${stats.meanErr}%, expected ~${stats.fitResidual}% after correction). From now on, whenever you place something by READING the video (not from get_objects/tool-result numbers), correct your aim with: ${corrText}. Call calibrate_start once more to verify while applying it (max 3 rounds).`);
+          : `A systematic distortion in your grid reading was measured (raw error ${stats.meanErr}%, expected ~${stats.fitResidual}% after correction). From now on, whenever you place something by READING the video (not from get_objects/tool-result numbers), correct your aim with: ${corrText}. Call calibrate_start once more to verify while applying it, and then pass appliedCorrection=true to calibrate_check (max 3 rounds).`);
       return summary;
     }
     case 'clear_board': {
