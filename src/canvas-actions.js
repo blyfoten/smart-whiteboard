@@ -352,6 +352,10 @@ export async function executeAction(name, args = {}) {
           left: r.left + (r.width - text.width) / 2,
           top: r.top + (r.height - text.height) / 2,
         });
+      } else if (args.cx != null && args.cy != null) {
+        // Center placement: we know the rendered size, the model doesn't.
+        const c = pctToScene(canvas, args.cx, args.cy);
+        text.set({ left: c.x - text.width / 2, top: c.y - text.height / 2 });
       } else {
         const p = pctToScene(canvas, num(args.x, 10), num(args.y, 10));
         text.set({ left: p.x, top: p.y });
@@ -526,7 +530,7 @@ export async function executeAction(name, args = {}) {
           `Calibration round ${_calib.round}. The board now shows ${CALIB_CROSSES.length} red crosses and 1 dashed blue rectangle. ` +
           'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read off the grid — cx,cy places the ellipse by its CENTER. ' +
           'Strong NUMBERED gridlines mark the 10s; thin faint lines mark the 5s (15, 25, 35...). A cross often sits ON a thin 5-line or between lines — read each coordinate to the nearest 1, never snap to the nearest numbered line. ' +
-          '(2) Write the word CAL centered in the dashed blue rectangle, sized so the text is roughly 70% of the box height — do NOT use boxId, place it by reading the video. ' +
+          '(2) Write the word CAL with cx,cy set to the CENTER of the dashed blue rectangle as you read it off the grid, size roughly 70% of the box height — do NOT use boxId, place it by reading the video. ' +
           'When all marks are placed, call calibrate_check.',
       };
     }
