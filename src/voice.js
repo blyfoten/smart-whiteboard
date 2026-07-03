@@ -283,10 +283,11 @@ async function start() {
             ws.send(JSON.stringify({
               type: 'text',
               data:
-                'SYSTEM NOTE (silent context — not the user speaking, do not mention it): a previous ' +
-                'calibration measured your placement distortion on this board. Whenever you place ' +
-                'something by READING the video frame, correct your aim with: ' + cal.corrText + '. ' +
-                'Never apply this to coordinates from get_objects or tool results — those are exact.',
+                'SYSTEM NOTE (silent context — not the user speaking, do not mention it): a stored ' +
+                'calibration exists for this board. Whenever the coordinates you pass to a drawing ' +
+                'tool come from READING the video frame, pass fromVideo=true and they are corrected ' +
+                'automatically — never do correction math yourself, and never set fromVideo for ' +
+                'coordinates from get_objects or tool results (those are exact).',
             }));
           }
         } catch (e) { /* ignore bad stored value */ }

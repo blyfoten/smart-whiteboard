@@ -140,13 +140,67 @@ function bboxPct(canvas, o) {
 let _calib = null; // { crosses, box, targetObjs, beforeIds, round }
 let _lastModel = null; // latest ABSOLUTE correction model (see calibrate_check)
 
-// 7 targets over 5+ DISTINCT values per axis: with repeated coords a discrete
-// gridline snap and a genuine linear stretch are indistinguishable to the fit.
+// Fallback layout: 7 targets over 5+ DISTINCT values per axis (with repeated
+// coords a discrete gridline snap and a genuine linear stretch are
+// indistinguishable to the fit).
 const CALIB_CROSSES = [
   { x: 15, y: 15 }, { x: 85, y: 15 }, { x: 50, y: 40 }, { x: 15, y: 85 }, { x: 85, y: 85 },
   { x: 35, y: 25 }, { x: 70, y: 70 },
 ];
 const CALIB_BOX = { x: 35, y: 60, w: 30, h: 18 };
+
+// Random target layout per round: the check report reveals the true target
+// positions, so with a FIXED layout every round after the first tests the
+// assistant's memory of the numbers, not its reading of the video.
+function randCalibLayout() {
+  const box = {
+    x: Math.round(10 + Math.random() * 55),
+    y: Math.round(15 + Math.random() * 50),
+    w: 30,
+    h: 18,
+  };
+  const crosses = [];
+  let guard = 0;
+  while (crosses.length < 7 && guard++ < 800) {
+    const x = Math.round(8 + Math.random() * 84);
+    const y = Math.round(8 + Math.random() * 84);
+    if (x > box.x - 6 && x < box.x + box.w + 6 && y > box.y - 6 && y < box.y + box.h + 6) continue;
+    if (crosses.some((p) => Math.hypot(p.x - x, p.y - y) < 15)) continue;
+    crosses.push({ x, y });
+  }
+  return crosses.length >= 5 ? { box, crosses } : { box: CALIB_BOX, crosses: CALIB_CROSSES };
+}
+
+// The stored ABSOLUTE correction model (latest in this session, else persisted).
+function readModel() {
+  if (_lastModel) return _lastModel;
+  try {
+    return (JSON.parse(localStorage.getItem('sw_voicecal') || 'null') || {}).absolute || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// An eye-read percent -> true board percent, per the correction model.
+function correctRead(v, f) {
+  return f ? v - (f.b + f.m * (v - (f.c0 || 50))) : v;
+}
+
+// fromVideo=true on a drawing tool means its coordinates were READ off the
+// video frame: apply the stored calibration mechanically here. The assistant
+// only tags the source — it never does the correction arithmetic itself (a
+// signed formula applied per-call by the model proved error-prone).
+function correctedArgs(args) {
+  const model = readModel();
+  if (!model || !model.x || !model.y) return args;
+  const out = { ...args };
+  ['x', 'cx', 'x1', 'x2'].forEach((k) => { if (out[k] != null) out[k] = correctRead(num(out[k]), model.x); });
+  ['y', 'cy', 'y1', 'y2'].forEach((k) => { if (out[k] != null) out[k] = correctRead(num(out[k]), model.y); });
+  if (Array.isArray(out.points)) {
+    out.points = out.points.map((p) => ({ x: correctRead(num(p.x), model.x), y: correctRead(num(p.y), model.y) }));
+  }
+  return out;
+}
 
 function calibCleanup(canvas) {
   if (!_calib) return;
@@ -287,7 +341,13 @@ function applyColor(o, color) {
 export async function executeAction(name, args = {}) {
   const canvas = getCanvas();
   if (!canvas) return { error: 'canvas not available' };
+
+  const DRAW_TOOLS = ['draw_line', 'draw_rect', 'draw_ellipse', 'draw_arrow', 'draw_polyline', 'draw_polygon', 'write_text'];
+  const fromVideo = args && args.fromVideo === true;
+  if (fromVideo && DRAW_TOOLS.includes(name)) args = correctedArgs(args);
+
   const place = (obj) => {
+    if (fromVideo) obj._fromVideo = true; // lets calibrate_check compose models truthfully
     canvas.add(obj);
     canvas.requestRenderAll();
     return { ok: true, id: ensureId(obj), bbox: bboxPct(canvas, obj) };
@@ -499,9 +559,10 @@ export async function executeAction(name, args = {}) {
     }
     case 'calibrate_start': {
       calibCleanup(canvas);
+      const layout = randCalibLayout();
       const targetObjs = [];
       historySuspend(() => {
-        CALIB_CROSSES.forEach((c) => {
+        layout.crosses.forEach((c) => {
           const p = pctToScene(canvas, c.x, c.y);
           const arm = pctLen(canvas, 2, 0).w;
           const cross = new Path(
@@ -511,8 +572,8 @@ export async function executeAction(name, args = {}) {
           canvas.add(cross);
           targetObjs.push(cross);
         });
-        const tl = pctToScene(canvas, CALIB_BOX.x, CALIB_BOX.y);
-        const sz = pctLen(canvas, CALIB_BOX.w, CALIB_BOX.h);
+        const tl = pctToScene(canvas, layout.box.x, layout.box.y);
+        const sz = pctLen(canvas, layout.box.w, layout.box.h);
         const rect = new Rect({
           left: tl.x, top: tl.y, width: sz.w, height: sz.h, fill: '',
           stroke: '#15c', strokeWidth: 2, strokeDashArray: [6, 4],
@@ -523,17 +584,24 @@ export async function executeAction(name, args = {}) {
       });
       canvas.requestRenderAll();
       const beforeIds = new Set(canvas.getObjects().filter((o) => !o._isCalib).map((o) => ensureId(o)));
-      _calib = { targetObjs, beforeIds, round: _calib ? _calib.round + 1 : 1 };
+      _calib = {
+        targetObjs,
+        beforeIds,
+        crosses: layout.crosses,
+        box: layout.box,
+        modelUsed: readModel(), // model in effect while the marks are drawn
+        round: _calib ? _calib.round + 1 : 1,
+      };
       return {
         ok: true,
         round: _calib.round,
         instructions:
-          `Calibration round ${_calib.round}. The board now shows ${CALIB_CROSSES.length} red crosses and 1 dashed blue rectangle. ` +
-          'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read off the grid — cx,cy places the ellipse by its CENTER. ' +
+          `Calibration round ${_calib.round}. The board now shows ${layout.crosses.length} red crosses and 1 dashed blue rectangle — their positions are RANDOM this round, so read them off the grid, do not reuse positions from an earlier round. ` +
+          'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read — and fromVideo=true, so your stored calibration is applied automatically (never apply correction math yourself). ' +
           'Strong NUMBERED gridlines mark the 10s; thin faint lines mark the 5s (15, 25, 35...). A cross often sits ON a thin 5-line or between lines — read each coordinate to the nearest 1, never snap to the nearest numbered line. ' +
-          '(2) Write the word CAL with cx,cy set to the CENTER of the dashed blue rectangle as you read it off the grid, size roughly 70% of the box height — do NOT use boxId, place it by reading the video. ' +
+          '(2) Write the word CAL with cx,cy set to the CENTER of the dashed blue rectangle as you read it, fromVideo=true, size roughly 70% of the box height — do NOT use boxId here. ' +
           'IMPORTANT: cx,cy is where the MIDDLE of the ellipse/text will land — pass the target point directly, never pre-offset it by half the size (the tool centers for you). ' +
-          'When all marks are placed, call calibrate_check (pass appliedCorrection=true if you aimed using a correction model).',
+          'When all marks are placed, call calibrate_check.',
       };
     }
     case 'calibrate_check': {
@@ -544,7 +612,7 @@ export async function executeAction(name, args = {}) {
 
       // Pair each cross with the nearest unused mark and measure the miss.
       const used = new Set();
-      const perTarget = CALIB_CROSSES.map((c) => {
+      const perTarget = (_calib.crosses || CALIB_CROSSES).map((c) => {
         let best = null;
         let bestD = Infinity;
         for (const m of dots) {
@@ -571,17 +639,18 @@ export async function executeAction(name, args = {}) {
       };
 
       // Text test: how well does CAL sit inside the dashed box?
+      const box = _calib.box || CALIB_BOX;
       let textReport = null;
       if (texts.length) {
         const b = bboxPct(canvas, texts[0]);
-        const boxCx = CALIB_BOX.x + CALIB_BOX.w / 2;
-        const boxCy = CALIB_BOX.y + CALIB_BOX.h / 2;
+        const boxCx = box.x + box.w / 2;
+        const boxCy = box.y + box.h / 2;
         textReport = {
           bbox: b,
           centerOffset: { dx: round1(b.x + b.width / 2 - boxCx), dy: round1(b.y + b.height / 2 - boxCy) },
-          fitsInBox: b.x >= CALIB_BOX.x && b.y >= CALIB_BOX.y &&
-            b.x + b.width <= CALIB_BOX.x + CALIB_BOX.w && b.y + b.height <= CALIB_BOX.y + CALIB_BOX.h,
-          heightVsBox: round1((b.height / CALIB_BOX.h) * 100) + '%',
+          fitsInBox: b.x >= box.x && b.y >= box.y &&
+            b.x + b.width <= box.x + box.w && b.y + b.height <= box.y + box.h,
+          heightVsBox: round1((b.height / box.h) * 100) + '%',
         };
       }
 
@@ -600,14 +669,13 @@ export async function executeAction(name, args = {}) {
       const norm = (f) => ({ b: round1(f.b + f.m * (50 - f.c0)), m: f.m, c0: 50 });
       const addFits = (a, b2) => ({ b: round1(a.b + b2.b), m: Math.round((a.m + b2.m) * 1000) / 1000, c0: 50 });
       let absolute = { x: norm(correction.x), y: norm(correction.y) };
-      if (args.appliedCorrection === true) {
-        let prev = _lastModel;
-        if (!prev) {
-          try { prev = (JSON.parse(localStorage.getItem('sw_voicecal') || 'null') || {}).absolute || null; } catch (e) { prev = null; }
-        }
-        if (prev && prev.x && prev.y) {
-          absolute = { x: addFits(norm(prev.x), absolute.x), y: addFits(norm(prev.y), absolute.y) };
-        }
+      // Auto-detect whether the marks were drawn corrected: fromVideo-tagged
+      // marks had the model applied by the tool itself, which beats trusting
+      // the assistant's appliedCorrection self-report.
+      const applied = marks.some((o) => o._fromVideo) || args.appliedCorrection === true;
+      const prev = _calib.modelUsed;
+      if (applied && prev && prev.x && prev.y) {
+        absolute = { x: addFits(norm(prev.x), absolute.x), y: addFits(norm(prev.y), absolute.y) };
       }
       _lastModel = absolute;
       hits.forEach((r) => {
@@ -672,8 +740,8 @@ export async function executeAction(name, args = {}) {
       summary.advice = slips > 0
         ? `${slips} mark(s) SLIPPED to a wrong gridline (way off the trend of your other marks) — a misread, not a bias. Remember: strong numbered lines are the 10s, thin faint lines are the 5s (15, 25...), and a target can sit ON a 5-line or between lines. Call calibrate_start again and read each position to the nearest 1 before drawing; do not snap to the nearest numbered line.`
         : (stats.meanErr <= 1.5
-          ? `Excellent — raw aim within ~${stats.meanErr}%. Calibration done; no correction needed. Briefly tell the user the mean error.`
-          : `A systematic distortion in your grid reading was measured (raw error ${stats.meanErr}%, expected ~${stats.fitResidual}% after correction). From now on, whenever you place something by READING the video (not from get_objects/tool-result numbers), correct your aim with: ${corrText}. Call calibrate_start once more to verify while applying it, and then pass appliedCorrection=true to calibrate_check (max 3 rounds).`);
+          ? `Excellent — mean error ${stats.meanErr}%. Calibration is stored and applied automatically whenever you pass fromVideo=true on a drawing tool. Briefly tell the user the mean error.`
+          : `A systematic distortion in your grid reading was measured and STORED (residual error ${stats.meanErr}% this round, expected ~${stats.fitResidual}% next). It is applied automatically whenever you pass fromVideo=true on a drawing tool — never do correction math yourself. Call calibrate_start once more to verify (max 3 rounds), placing every mark with fromVideo=true.`);
       return summary;
     }
     case 'clear_board': {
