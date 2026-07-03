@@ -113,7 +113,7 @@ function axisFit(pairs) {
   if (!pairs.length) return { b: 0, m: 0, c0: 50, slips: 0 };
   const resid = (fit, p) => p[1] - (fit.b + fit.m * (p[0] - fit.c0));
   let fit = linFit(pairs);
-  const inliers = pairs.filter((p) => Math.abs(resid(fit, p)) <= 2);
+  const inliers = pairs.filter((p) => Math.abs(resid(fit, p)) <= 2.5);
   if (inliers.length >= 3 && inliers.length < pairs.length) fit = linFit(inliers);
   return { ...fit, slips: pairs.length - inliers.length };
 }
@@ -596,16 +596,24 @@ export async function executeAction(name, args = {}) {
         ok: true,
         round: _calib.round,
         instructions:
-          `Calibration round ${_calib.round}. The board now shows ${layout.crosses.length} red crosses and 1 dashed blue rectangle — their positions are RANDOM this round, so read them off the grid, do not reuse positions from an earlier round. ` +
+          `Calibration round ${_calib.round}. YOU do everything in this test YOURSELF with tool calls, RIGHT NOW — the user draws nothing, do not ask them to do anything, and do not wait for permission or confirmation. ` +
+          `The board now shows ${layout.crosses.length} red crosses and 1 dashed blue rectangle — their positions are RANDOM this round, so read them off the grid, do not reuse positions from an earlier round. ` +
           'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read — and fromVideo=true, so your stored calibration is applied automatically (never apply correction math yourself). ' +
           'Strong NUMBERED gridlines mark the 10s; thin faint lines mark the 5s (15, 25, 35...). A cross often sits ON a thin 5-line or between lines — read each coordinate to the nearest 1, never snap to the nearest numbered line. ' +
           '(2) Write the word CAL with cx,cy set to the CENTER of the dashed blue rectangle as you read it, fromVideo=true, size roughly 70% of the box height — do NOT use boxId here. ' +
           'IMPORTANT: cx,cy is where the MIDDLE of the ellipse/text will land — pass the target point directly, never pre-offset it by half the size (the tool centers for you). ' +
-          'When all marks are placed, call calibrate_check.',
+          'When all marks are placed, call calibrate_check immediately.',
       };
     }
     case 'calibrate_check': {
       if (!_calib) return { ok: false, message: 'call calibrate_start first' };
+      if (_calib.checked) {
+        return {
+          ok: false,
+          message: 'This round was already checked and its targets are stale. You MUST call calibrate_start to lay out NEW targets before drawing the next round\'s marks.',
+        };
+      }
+      _calib.checked = true;
       const marks = canvas.getObjects().filter((o) => !o._isCalib && o._aiId && !_calib.beforeIds.has(o._aiId));
       const texts = marks.filter((o) => o.type === 'i-text' || o.type === 'text');
       const dots = marks.filter((o) => o.type !== 'i-text' && o.type !== 'text');
@@ -642,7 +650,7 @@ export async function executeAction(name, args = {}) {
       const box = _calib.box || CALIB_BOX;
       let textReport = null;
       if (texts.length) {
-        const b = bboxPct(canvas, texts[0]);
+        const b = bboxPct(canvas, texts[texts.length - 1]); // most recent CAL
         const boxCx = box.x + box.w / 2;
         const boxCy = box.y + box.h / 2;
         textReport = {
@@ -681,7 +689,7 @@ export async function executeAction(name, args = {}) {
       hits.forEach((r) => {
         const rx = r.dx - (correction.x.b + correction.x.m * (r.target.x - correction.x.c0));
         const ry = r.dy - (correction.y.b + correction.y.m * (r.target.y - correction.y.c0));
-        r.slip = Math.abs(rx) > 2 || Math.abs(ry) > 2;
+        r.slip = Math.abs(rx) > 2.5 || Math.abs(ry) > 2.5;
         r.resid = round1(Math.hypot(rx, ry));
       });
       const slips = hits.filter((r) => r.slip).length;
@@ -711,8 +719,11 @@ export async function executeAction(name, args = {}) {
       const summary = { ok: true, round, stats, perTarget, text: textReport, correction, absolute, diagnostics };
 
       // Persist the ABSOLUTE model so future voice sessions start pre-calibrated
-      // (voice.js injects it as a context note right after connecting).
-      if (!slips && hits.length >= 4) {
+      // (voice.js injects it as a context note right after connecting). Store on
+      // every round with enough inliers — gating on zero slips froze the stored
+      // model whenever reading was noisy, so a bad model could never heal; with
+      // composition each round's residual pulls the model back toward truth.
+      if (hits.length - slips >= 5) {
         try {
           localStorage.setItem('sw_voicecal', JSON.stringify({ corrText, absolute, measured: correction, stats, round, when: Date.now() }));
         } catch (e) { /* storage unavailable — session-only calibration */ }
@@ -738,10 +749,10 @@ export async function executeAction(name, args = {}) {
       );
 
       summary.advice = slips > 0
-        ? `${slips} mark(s) SLIPPED to a wrong gridline (way off the trend of your other marks) — a misread, not a bias. Remember: strong numbered lines are the 10s, thin faint lines are the 5s (15, 25...), and a target can sit ON a 5-line or between lines. Call calibrate_start again and read each position to the nearest 1 before drawing; do not snap to the nearest numbered line.`
+        ? `${slips} mark(s) landed far off the trend of your other marks — misreads, not bias. Remember: strong numbered lines are the 10s, thin faint lines are the 5s (15, 25...), and a target can sit anywhere between lines — read to the nearest 1. To retry you MUST call calibrate_start FIRST (it lays out NEW random targets; these are now stale), then immediately draw fresh marks yourself with fromVideo=true and check again (max 3 rounds).`
         : (stats.meanErr <= 1.5
           ? `Excellent — mean error ${stats.meanErr}%. Calibration is stored and applied automatically whenever you pass fromVideo=true on a drawing tool. Briefly tell the user the mean error.`
-          : `A systematic distortion in your grid reading was measured and STORED (residual error ${stats.meanErr}% this round, expected ~${stats.fitResidual}% next). It is applied automatically whenever you pass fromVideo=true on a drawing tool — never do correction math yourself. Call calibrate_start once more to verify (max 3 rounds), placing every mark with fromVideo=true.`);
+          : `A systematic distortion in your grid reading was measured and STORED (residual error ${stats.meanErr}% this round, expected ~${stats.fitResidual}% next). It is applied automatically whenever you pass fromVideo=true on a drawing tool — never do correction math yourself. To verify, call calibrate_start FIRST (new targets), then immediately draw the marks yourself with fromVideo=true (max 3 rounds).`);
       return summary;
     }
     case 'clear_board': {
