@@ -111,10 +111,16 @@ function median(arr) {
 // and get flagged as SLIPS and excluded from the fit.
 function axisFit(pairs) {
   if (!pairs.length) return { b: 0, m: 0, c0: 50, slips: 0 };
+  // Gross pre-filter: marks placed from a stale frame or hallucinated can be
+  // tens of units off; those would drag the least-squares line anywhere, and
+  // the residual test can't recover once the majority is wild.
+  const med = median(pairs.map((p) => p[1]));
+  const kept = pairs.filter((p) => Math.abs(p[1] - med) <= 12);
+  const base = kept.length >= 3 ? kept : pairs;
   const resid = (fit, p) => p[1] - (fit.b + fit.m * (p[0] - fit.c0));
-  let fit = linFit(pairs);
-  const inliers = pairs.filter((p) => Math.abs(resid(fit, p)) <= 2.5);
-  if (inliers.length >= 3 && inliers.length < pairs.length) fit = linFit(inliers);
+  let fit = linFit(base);
+  const inliers = base.filter((p) => Math.abs(resid(fit, p)) <= 2.5);
+  if (inliers.length >= 3 && inliers.length < base.length) fit = linFit(inliers);
   return { ...fit, slips: pairs.length - inliers.length };
 }
 
@@ -181,9 +187,13 @@ function readModel() {
   }
 }
 
-// An eye-read percent -> true board percent, per the correction model.
+// An eye-read percent -> true board percent, per the correction model. The
+// applied delta is clamped: a real optical distortion is a few percent, so a
+// larger correction means a corrupted model — never launch marks off the board.
 function correctRead(v, f) {
-  return f ? v - (f.b + f.m * (v - (f.c0 || 50))) : v;
+  if (!f) return v;
+  const d = Math.max(-10, Math.min(10, f.b + f.m * (v - (f.c0 || 50))));
+  return v - d;
 }
 
 // fromVideo=true on a drawing tool means its coordinates were READ off the
@@ -592,13 +602,19 @@ export async function executeAction(name, args = {}) {
         modelUsed: readModel(), // model in effect while the marks are drawn
         round: _calib ? _calib.round + 1 : 1,
       };
+      // Hold the tool result until the targets have been streamed in a video
+      // frame (~1 fps + model-side latency): an assistant that acts the instant
+      // this returns would otherwise read a frame WITHOUT the targets and place
+      // marks blind — the wild-scatter failure mode.
+      await new Promise((resolve) => setTimeout(resolve, 3000));
       return {
         ok: true,
         round: _calib.round,
         instructions:
-          `Calibration round ${_calib.round}. YOU do everything in this test YOURSELF with tool calls, RIGHT NOW — the user draws nothing, do not ask them to do anything, and do not wait for permission or confirmation. ` +
+          `Calibration round ${_calib.round}. The targets are NOW VISIBLE in your current video frame (this call waited for the stream). If you cannot see red crosses in the frame, wait for the next frame before drawing — never guess. ` +
+          'YOU do everything in this test YOURSELF with tool calls, RIGHT NOW — the user draws nothing, do not ask them to do anything, and do not wait for permission or confirmation. ' +
           `The board now shows ${layout.crosses.length} red crosses and 1 dashed blue rectangle — their positions are RANDOM this round, so read them off the grid, do not reuse positions from an earlier round. ` +
-          'Look at the NEXT video frame (about a second away), then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read — and fromVideo=true, so your stored calibration is applied automatically (never apply correction math yourself). ' +
+          'Study the current frame, then: (1) for each red cross, draw a small ellipse (width 3, height 3) with cx,cy set to the cross position you read — and fromVideo=true, so your stored calibration is applied automatically (never apply correction math yourself). ' +
           'Strong NUMBERED gridlines mark the 10s; thin faint lines mark the 5s (15, 25, 35...). A cross often sits ON a thin 5-line or between lines — read each coordinate to the nearest 1, never snap to the nearest numbered line. ' +
           '(2) Write the word CAL with cx,cy set to the CENTER of the dashed blue rectangle as you read it, fromVideo=true, size roughly 70% of the box height — do NOT use boxId here. ' +
           'IMPORTANT: cx,cy is where the MIDDLE of the ellipse/text will land — pass the target point directly, never pre-offset it by half the size (the tool centers for you). ' +
@@ -685,7 +701,7 @@ export async function executeAction(name, args = {}) {
       if (applied && prev && prev.x && prev.y) {
         absolute = { x: addFits(norm(prev.x), absolute.x), y: addFits(norm(prev.y), absolute.y) };
       }
-      _lastModel = absolute;
+
       hits.forEach((r) => {
         const rx = r.dx - (correction.x.b + correction.x.m * (r.target.x - correction.x.c0));
         const ry = r.dy - (correction.y.b + correction.y.m * (r.target.y - correction.y.c0));
@@ -698,6 +714,22 @@ export async function executeAction(name, args = {}) {
       stats.cleanErr = round1(mean(cleanHits.map((r) => r.err)));
       // Expected error if the assistant applies the correction model.
       stats.fitResidual = round1(mean(cleanHits.map((r) => r.resid)));
+
+      // Trust gate: adopt the new model ONLY from a credible measurement. A
+      // stale-frame round produces wild scatter whose fit, if adopted and then
+      // applied to the next round's marks, compounds into a runaway (marks
+      // launched off the board). A real optical distortion is small — a few
+      // percent of offset, a few percent of stretch.
+      const sane = (f, bMax, mMax) => Math.abs(f.b) <= bMax && Math.abs(f.m) <= mMax;
+      const modelUpdated =
+        hits.length - slips >= 5 &&
+        sane(norm(correction.x), 8, 0.2) && sane(norm(correction.y), 8, 0.2) &&
+        sane(absolute.x, 10, 0.25) && sane(absolute.y, 10, 0.25);
+      if (modelUpdated) {
+        _lastModel = absolute;
+      } else {
+        absolute = prev && prev.x ? { x: norm(prev.x), y: norm(prev.y) } : (_lastModel || absolute);
+      }
       const corrText =
         `aim_x = intended_x - (${absolute.x.b} + ${absolute.x.m}*(intended_x - 50)); ` +
         `aim_y = intended_y - (${absolute.y.b} + ${absolute.y.m}*(intended_y - 50))`;
@@ -716,14 +748,11 @@ export async function executeAction(name, args = {}) {
       }
       canvas.requestRenderAll();
 
-      const summary = { ok: true, round, stats, perTarget, text: textReport, correction, absolute, diagnostics };
+      const summary = { ok: true, round, stats, perTarget, text: textReport, correction, absolute, modelUpdated, diagnostics };
 
       // Persist the ABSOLUTE model so future voice sessions start pre-calibrated
-      // (voice.js injects it as a context note right after connecting). Store on
-      // every round with enough inliers — gating on zero slips froze the stored
-      // model whenever reading was noisy, so a bad model could never heal; with
-      // composition each round's residual pulls the model back toward truth.
-      if (hits.length - slips >= 5) {
+      // (voice.js injects it as a context note right after connecting).
+      if (modelUpdated) {
         try {
           localStorage.setItem('sw_voicecal', JSON.stringify({ corrText, absolute, measured: correction, stats, round, when: Date.now() }));
         } catch (e) { /* storage unavailable — session-only calibration */ }
@@ -740,7 +769,7 @@ export async function executeAction(name, args = {}) {
         `<table border="1" cellpadding="3" style="border-collapse:collapse;font-size:12px;margin:4px 0">` +
         `<tr><th>target %</th><th>placed %</th><th>Δx, Δy</th><th>err</th></tr>${rows}</table>` +
         `Bias (robust): Δx=${correction.x.b}, Δy=${correction.y.b} · clean err ${stats.cleanErr} · after-correction ~${stats.fitResidual} · ${slips} slipped · raw mean ${stats.meanErr} · max ${stats.maxErr} (percent units)<br>` +
-        `Correction model: <code>${corrText}</code><br>` +
+        `Correction model (${modelUpdated ? 'UPDATED' : 'NOT updated — measurement untrusted'}): <code>${corrText}</code><br>` +
         (textReport
           ? `Text: center off (${textReport.centerOffset.dx}, ${textReport.centerOffset.dy}), ` +
             `${textReport.fitsInBox ? 'fits in box ✔' : 'OVERFLOWS box ✘'}, height ${textReport.heightVsBox} of box<br>`
@@ -748,12 +777,23 @@ export async function executeAction(name, args = {}) {
         `<pre style="font-size:11px;white-space:pre-wrap;margin:4px 0">${JSON.stringify({ stats, correction: { measured: correction, absolute }, text: textReport, diagnostics }, null, 1)}</pre>`
       );
 
-      summary.advice = slips > 0
+      summary.advice = !modelUpdated && slips >= 3
+        ? `This round's marks are wildly scattered (mean error ${stats.meanErr}%) — the correction model was NOT changed. This usually means you drew before the targets reached your video feed. Call calibrate_start again; when it RETURNS, the targets are already visible in your current frame — study that frame, find all red crosses, and only then draw.`
+        : slips > 0
         ? `${slips} mark(s) landed far off the trend of your other marks — misreads, not bias. Remember: strong numbered lines are the 10s, thin faint lines are the 5s (15, 25...), and a target can sit anywhere between lines — read to the nearest 1. To retry you MUST call calibrate_start FIRST (it lays out NEW random targets; these are now stale), then immediately draw fresh marks yourself with fromVideo=true and check again (max 3 rounds).`
         : (stats.meanErr <= 1.5
           ? `Excellent — mean error ${stats.meanErr}%. Calibration is stored and applied automatically whenever you pass fromVideo=true on a drawing tool. Briefly tell the user the mean error.`
           : `A systematic distortion in your grid reading was measured and STORED (residual error ${stats.meanErr}% this round, expected ~${stats.fitResidual}% next). It is applied automatically whenever you pass fromVideo=true on a drawing tool — never do correction math yourself. To verify, call calibrate_start FIRST (new targets), then immediately draw the marks yourself with fromVideo=true (max 3 rounds).`);
       return summary;
+    }
+    case 'calibrate_reset': {
+      _lastModel = null;
+      try { localStorage.removeItem('sw_voicecal'); } catch (e) { /* noop */ }
+      calibCleanup(canvas);
+      _calib = null;
+      canvas.requestRenderAll();
+      appendToOutput('<i>🎯 Calibration reset — stored correction model cleared.</i>');
+      return { ok: true, message: 'Calibration cleared. fromVideo placements are now uncorrected until a new calibration is run.' };
     }
     case 'clear_board': {
       clearCanvas(canvas);
