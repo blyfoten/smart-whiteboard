@@ -1,13 +1,16 @@
-// src/modes.js — interaction modes (draw / select / shapes) + smart-shape snapping
+// src/modes.js — interaction modes (draw / select / shapes / cad) + smart-shape snapping
 //
 // Draw   : freehand ink, nothing selectable (today's behavior, equation OCR safe)
 // Select : Fabric native select / move / resize / rotate / multi-select
 // Shapes : freehand ink that snaps to clean primitives on stroke completion
+// CAD    : freehand ink that becomes parametric sketch geometry (cad/cad-mode.js);
+//          a tap (stray-dot click) selects entities for the constraint toolbar
 //
 // A "Smart shapes" setting (off / manual / auto) controls when snapping fires.
 // Hold Space to temporarily drop into Select without leaving the current mode.
 
 import { pathToPoints, recognizeStroke } from './shapes.js';
+import { cadHandleStroke, cadHandleClick } from './cad/cad-mode.js';
 import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
 import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
 import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
@@ -15,7 +18,9 @@ import { deleteActiveSelection } from './equation-menu.js';
 import { getDrawColor, computedShapeFill, getCornerRadius, getLineStyle } from './draw-settings.js';
 import { toggleSubToolbar, showSubToolbar, isSubToolbarOpen } from './draw-toolbar.js';
 
-let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
+const MODES = ['draw', 'select', 'shapes', 'cad'];
+
+let _mode = 'draw';                 // one of MODES
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
 let _edgeSnap = 'on';               // 'on' | 'off' — endpoint edge-snap + sticky anchors
 let _canvas = null;
@@ -52,14 +57,14 @@ function _applyModeToCanvas() {
 }
 
 function _updateButtons() {
-  ['draw', 'select', 'shapes'].forEach((m) => {
+  MODES.forEach((m) => {
     const btn = document.getElementById(`mode-${m}`);
     if (btn) btn.classList.toggle('active', m === _mode);
   });
 }
 
 export function setMode(mode) {
-  if (!['draw', 'select', 'shapes'].includes(mode)) return;
+  if (!MODES.includes(mode)) return;
   _mode = mode;
   _applyModeToCanvas();
   _updateButtons();
@@ -241,12 +246,10 @@ export function initModes(canvas) {
       showSubToolbar(mode);
     }
   };
-  const drawBtn = document.getElementById('mode-draw');
-  const selectBtn = document.getElementById('mode-select');
-  const shapesBtn = document.getElementById('mode-shapes');
-  if (drawBtn) drawBtn.addEventListener('click', () => onModeButton('draw'));
-  if (selectBtn) selectBtn.addEventListener('click', () => onModeButton('select'));
-  if (shapesBtn) shapesBtn.addEventListener('click', () => onModeButton('shapes'));
+  MODES.forEach((m) => {
+    const btn = document.getElementById(`mode-${m}`);
+    if (btn) btn.addEventListener('click', () => onModeButton(m));
+  });
 
   const smartSelect = document.getElementById('smart-shapes-select');
   if (smartSelect) {
@@ -260,7 +263,16 @@ export function initModes(canvas) {
     edgeSnapSelect.addEventListener('change', (ev) => setEdgeSnap(ev.target.value));
   }
 
-  canvas.on('path:created', (e) => { if (!_removeStrayDot(e)) _onPathCreated(e); });
+  canvas.on('path:created', (e) => {
+    if (_mode === 'cad') {
+      // In CAD mode a tap's stray dot doubles as a click: select the sketch
+      // entity under it. Real strokes become parametric geometry.
+      if (_removeStrayDot(e)) cadHandleClick(e.path);
+      else cadHandleStroke(e.path);
+      return;
+    }
+    if (!_removeStrayDot(e)) _onPathCreated(e);
+  });
   // After an undo, re-pin anchored nodes (e.g. a restored/relocated target).
   onAfterUndo(() => _reapplyAnchors(null));
   // Sticky anchors: anchored polyline nodes follow their shape as it moves.
@@ -315,10 +327,13 @@ export function initModes(canvas) {
     }
   });
 
-  // Delete / Backspace removes the current selection (unless typing).
+  // Delete / Backspace removes the current selection (unless typing). CAD
+  // renderings (markers, dimension labels) are views of the sketch model, not
+  // deletable objects — CAD deletion goes through cad-mode's own handler.
   window.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Delete' && ev.key !== 'Backspace') return;
-    if (_isTyping() || !_canvas.getActiveObject()) return;
+    const active = _canvas.getActiveObject();
+    if (_isTyping() || !active || active._cad) return;
     ev.preventDefault();
     deleteActiveSelection();
   });

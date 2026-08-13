@@ -2,6 +2,7 @@
 
 import { Canvas, PencilBrush, StaticCanvas, Point } from 'fabric';
 import { undo as historyUndo, suspend as historySuspend, pushComposite } from './history.js';
+import { getSketchJSON, loadSketchJSON } from './cad/cad-mode.js';
 
 let canvasInstance = null;
 let _isPinching = false;
@@ -278,18 +279,23 @@ export function saveScreenshot(canvas) {
 
 export function clearCanvas(canvas) {
   if (!canvas) return;
-  // Record the clear as one undoable step that restores everything.
-  const removed = canvas.getObjects().slice();
+  // Record the clear as one undoable step that restores everything. CAD
+  // renderings are excluded — the CAD sketch model is cleared (and restored on
+  // undo) as a whole, which re-renders its own Fabric objects.
+  const removed = canvas.getObjects().filter((o) => !o._cad);
   const prevEq = window.extractedEquationData;
+  const prevCad = getSketchJSON();
   historySuspend(() => {
     canvas.clear();
     canvas.backgroundColor = 'white';
   });
+  loadSketchJSON(null);
   canvas.requestRenderAll();
   window.extractedEquationData = null;
-  if (removed.length) {
+  if (removed.length || prevCad) {
     pushComposite((c) => {
       removed.forEach((o) => c.add(o));
+      loadSketchJSON(prevCad);
       window.extractedEquationData = prevEq;
     });
   }
