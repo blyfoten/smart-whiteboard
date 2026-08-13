@@ -20,7 +20,7 @@
 // constraint buttons. Point-dragging happens in Select mode (or held Space).
 
 import { Line as FabricLine, Circle as FabricCircle, IText, FabricText } from 'fabric';
-import { classifyStroke, pathToPoints } from '../shape-classifier.js';
+import { classifyStroke, pathToPoints, MIN_SIZE } from '../shape-classifier.js';
 import { Sketch } from './sketch.js';
 import { solveSketch } from './solver.js';
 import {
@@ -39,11 +39,23 @@ const COLOR = {
 };
 
 const POINT_R = 4;
-const HIT_POINT = 10;   // px: click-select radius for points
-const HIT_EDGE = 8;     // px: click-select distance for lines/circles
-const HIT_DIM = 18;     // px: click radius for dimension labels
+const HIT_POINT = 18;   // px: click-select radius for points
+const HIT_EDGE = 16;    // px: click-select distance for lines/circles
+const HIT_DIM = 24;     // px: click radius for dimension labels
 const SNAP_MERGE = 14;  // px: endpoint drawn near an existing point merges
 const SNAP_ONLINE = 10; // px: endpoint drawn near an existing line sticks to it
+
+// A finger or stylus is far less precise than a mouse, so every hit radius is
+// widened on coarse pointers. Read per tap rather than once at load, so a
+// hybrid laptop switching between trackpad and touchscreen stays right.
+function pointerScale() {
+  if (typeof window === 'undefined' || !window.matchMedia) return 1;
+  return window.matchMedia('(pointer: coarse)').matches ? 1.7 : 1;
+}
+
+// Priority nudge (in normalized-distance units) for targets that are small or
+// float above the geometry, so they win a near-tie against a line underneath.
+const BIAS = { dim: 0.25, point: 0.35, entity: 0 };
 
 let _canvas = null;
 let _getMode = () => 'draw';
@@ -382,35 +394,68 @@ export function cadHandleStroke(path) {
 
 // --- click selection (CAD mode) ---
 
-function hitTest(x, y) {
+// What's under a tap at (x, y). Rather than returning the first target in a
+// fixed priority order, every candidate within its radius is scored by how
+// close it is relative to that radius, so a line directly under the finger
+// beats a point at the edge of its own reach; the BIAS nudges keep small
+// floating targets (dimension labels, points) winning near-ties.
+// `slop` widens every radius by how far the tap itself wandered.
+function hitTest(x, y, slop = 0) {
   const zoom = (_canvas && _canvas.getZoom()) || 1;
-  // Dimensions first (they float above everything).
+  const scale = pointerScale();
+  const radius = (px) => (px * scale) / zoom + slop;
+
+  let best = null;
+  let bestScore = Infinity;
+  const consider = (hit, distance, r) => {
+    if (distance > r) return;
+    const score = distance / r - BIAS[hit.kind];
+    if (score < bestScore) {
+      bestScore = score;
+      best = hit;
+    }
+  };
+
   for (const c of _sketch.constraints) {
     if (c.expr === undefined) continue;
     const pos = dimLabelPosition(c);
-    if (pos && Math.hypot(pos.x - x, pos.y - y) <= HIT_DIM / zoom) {
-      return { kind: 'dim', id: c.id };
-    }
+    if (pos) consider({ kind: 'dim', id: c.id }, Math.hypot(pos.x - x, pos.y - y), radius(HIT_DIM));
   }
-  const p = _sketch.findPointNear(x, y, HIT_POINT / zoom);
-  if (p) return { kind: 'point', id: p.id };
+  for (const p of _sketch.points) {
+    consider({ kind: 'point', id: p.id }, Math.hypot(p.x - x, p.y - y), radius(HIT_POINT));
+  }
   for (const e of _sketch.circles()) {
     const ctr = _sketch.point(e.c);
-    if (ctr && Math.abs(Math.hypot(ctr.x - x, ctr.y - y) - e.r) <= HIT_EDGE / zoom) {
-      return { kind: 'entity', id: e.id };
+    if (ctr) {
+      consider({ kind: 'entity', id: e.id }, Math.abs(Math.hypot(ctr.x - x, ctr.y - y) - e.r), radius(HIT_EDGE));
     }
   }
-  const l = findLineNear(x, y, HIT_EDGE / zoom);
-  if (l) return { kind: 'entity', id: l.id };
-  return null;
+  for (const e of _sketch.lines()) {
+    const a = _sketch.point(e.p1);
+    const b = _sketch.point(e.p2);
+    if (a && b) consider({ kind: 'entity', id: e.id }, distToSegment({ x, y }, a, b), radius(HIT_EDGE));
+  }
+  return best;
 }
 
-// Entry point from modes.js for a tap (stray-dot click) in CAD mode.
+// A stroke too small for the recognizer to ever turn into geometry. In CAD
+// mode that's a tap, not ink: a poke that slipped a few pixels should select
+// what's under it instead of leaving an ink speck on the board.
+export function isCadTap(path) {
+  if (!path) return false;
+  return Math.hypot(path.width || 0, path.height || 0) < MIN_SIZE;
+}
+
+// Entry point from modes.js for a tap in CAD mode. The tap's own size feeds
+// back into the search radius — a poke that wandered 20px was evidently an
+// imprecise aim, so it gets a correspondingly more forgiving reach.
 export function cadHandleClick(dotPath) {
   if (!_canvas) return;
-  const x = (dotPath.left || 0) + (dotPath.width || 0) / 2;
-  const y = (dotPath.top || 0) + (dotPath.height || 0) / 2;
-  const hit = hitTest(x, y);
+  const w = dotPath.width || 0;
+  const h = dotPath.height || 0;
+  const x = (dotPath.left || 0) + w / 2;
+  const y = (dotPath.top || 0) + h / 2;
+  const hit = hitTest(x, y, Math.hypot(w, h) / 2);
   if (!hit) {
     if (_selection.length) {
       _selection = [];

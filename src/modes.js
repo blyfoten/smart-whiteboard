@@ -10,7 +10,7 @@
 // Hold Space to temporarily drop into Select without leaving the current mode.
 
 import { pathToPoints, recognizeStroke } from './shapes.js';
-import { cadHandleStroke, cadHandleClick, notifyModeChanged } from './cad/cad-mode.js';
+import { cadHandleStroke, cadHandleClick, isCadTap, notifyModeChanged } from './cad/cad-mode.js';
 import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
 import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
 import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
@@ -154,6 +154,12 @@ function _reanchorNodeAfterDrag(poly, i) {
   _canvas.requestRenderAll();
 }
 
+// Drop a just-drawn path, leaving no trace in the undo history.
+function _discardPath(p) {
+  historyPopLast();                          // drop its just-recorded add-entry
+  historySuspend(() => _canvas.remove(p));   // remove without recording
+}
+
 // A click (no drag) in draw mode leaves a zero-size "dot" path — e.g. the two
 // clicks of a double-click, or clicking away from a text box. Discard those
 // degenerate strokes (drawn marks/decimal points are bigger and kept).
@@ -161,8 +167,7 @@ function _removeStrayDot(e) {
   const p = e && e.path;
   if (!p) return false;
   if (Math.max(p.width || 0, p.height || 0) >= 3) return false;
-  historyPopLast();                          // drop its just-recorded add-entry
-  historySuspend(() => _canvas.remove(p));   // remove without recording
+  _discardPath(p);
   return true;
 }
 
@@ -266,10 +271,17 @@ export function initModes(canvas) {
 
   canvas.on('path:created', (e) => {
     if (_mode === 'cad') {
-      // In CAD mode a tap's stray dot doubles as a click: select the sketch
-      // entity under it. Real strokes become parametric geometry.
-      if (_removeStrayDot(e)) cadHandleClick(e.path);
-      else cadHandleStroke(e.path);
+      // In CAD mode any stroke too small to become geometry is a tap: select
+      // the sketch entity under it. This keeps poking a line forgiving — a
+      // finger tap that slips a few pixels selects instead of leaving a speck
+      // of ink. Bigger strokes become parametric geometry (or stay as ink
+      // annotation when the recognizer doesn't claim them).
+      if (isCadTap(e.path)) {
+        _discardPath(e.path);
+        cadHandleClick(e.path);
+      } else {
+        cadHandleStroke(e.path);
+      }
       return;
     }
     if (!_removeStrayDot(e)) _onPathCreated(e);
