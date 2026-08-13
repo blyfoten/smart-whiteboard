@@ -17,6 +17,7 @@ import { initBoardsPanel } from './boards-panel.js';
 import { solveEquation } from './api.js';
 import { initCad, getSketchJSON, loadSketchJSON } from './cad/cad-mode.js';
 import { initCadPanel } from './cad/cad-panel.js';
+import { initCadMenu } from './cad/cad-menu.js';
 import { getMode } from './modes.js';
 
 function handleCommand(command) {
@@ -51,6 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
       initEquationSelection(canvas); // selecting an equation shows the action menu
       initCad(canvas, { getMode }); // parametric CAD sketching mode
       initCadPanel();
+      initCadMenu(); // floating constraint/dimension menu beside CAD selections
       // The CAD sketch model lives outside the Fabric object list — persist it
       // with each board via the boards extension hook.
       registerBoardExtension({ key: 'cad', save: getSketchJSON, load: loadSketchJSON });

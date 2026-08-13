@@ -471,6 +471,18 @@ function commit(before) {
 // (model objects). Mutates the sketch; returns null on success or a
 // human-readable reason the selection didn't fit. Used by both the toolbar
 // (current CAD selection) and the voice agent (explicit ids).
+// Does an equivalent constraint already exist? Keeps repeated clicks (and
+// repeated voice calls) from stacking redundant constraints.
+function hasLineAxis(type, lineId) {
+  return _sketch.constraints.some((c) => c.type === type && c.line === lineId);
+}
+
+function hasPair(type, aId, bId) {
+  return _sketch.constraints.some(
+    (c) => c.type === type && ((c.a === aId && c.b === bId) || (c.a === bId && c.b === aId))
+  );
+}
+
 function constrainCore(type, sel) {
   const { lines, circles, points } = sel;
 
@@ -478,23 +490,30 @@ function constrainCore(type, sel) {
     case 'horizontal':
     case 'vertical': {
       if (!lines.length) return 'Select one or more lines first.';
-      lines.forEach((l) => _sketch.addConstraint({ type, line: l.id }));
+      const todo = lines.filter((l) => !hasLineAxis(type, l.id));
+      if (!todo.length) return `Already ${type}.`;
+      todo.forEach((l) => _sketch.addConstraint({ type, line: l.id }));
       break;
     }
     case 'parallel':
     case 'perpendicular': {
       if (lines.length !== 2) return 'Select exactly two lines.';
+      if (hasPair(type, lines[0].id, lines[1].id)) return `Already ${type}.`;
       _sketch.addConstraint({ type, a: lines[0].id, b: lines[1].id });
       break;
     }
     case 'equal': {
       if (lines.length >= 2) {
         for (let i = 1; i < lines.length; i++) {
-          _sketch.addConstraint({ type: 'equal', a: lines[0].id, b: lines[i].id });
+          if (!hasPair('equal', lines[0].id, lines[i].id)) {
+            _sketch.addConstraint({ type: 'equal', a: lines[0].id, b: lines[i].id });
+          }
         }
       } else if (circles.length >= 2) {
         for (let i = 1; i < circles.length; i++) {
-          _sketch.addConstraint({ type: 'equal', a: circles[0].id, b: circles[i].id });
+          if (!hasPair('equal', circles[0].id, circles[i].id)) {
+            _sketch.addConstraint({ type: 'equal', a: circles[0].id, b: circles[i].id });
+          }
         }
       } else {
         return 'Select two or more lines, or two or more circles.';
@@ -505,6 +524,9 @@ function constrainCore(type, sel) {
       if (points.length === 2) {
         _sketch.mergePoints(points[0].id, points[1].id);
       } else if (points.length === 1 && lines.length === 1) {
+        if (_sketch.constraints.some((c) => c.type === 'pointOnLine' && c.point === points[0].id && c.line === lines[0].id)) {
+          return 'Already on that line.';
+        }
         _sketch.addConstraint({ type: 'pointOnLine', point: points[0].id, line: lines[0].id });
       } else {
         return 'Select two points (merge), or a point and a line.';
@@ -536,6 +558,50 @@ export function applyConstraint(type) {
   _selection = [];
   commit(before);
   return null;
+}
+
+// The current CAD selection as model objects + which constraints it already
+// carries — drives the context menu's content-aware buttons and toggle states.
+export function selectionDetails() {
+  const lines = selectedLines();
+  const circles = selectedCircles();
+  const points = selectedPoints();
+  return {
+    sketch: _sketch,
+    lines,
+    circles,
+    points,
+    allHorizontal: lines.length > 0 && lines.every((l) => hasLineAxis('horizontal', l.id)),
+    allVertical: lines.length > 0 && lines.every((l) => hasLineAxis('vertical', l.id)),
+    allFixed: points.length > 0 && points.every((p) => isPointFixed(p.id)),
+    measuredAngle: lines.length === 2 ? measuredAngle(lines[0], lines[1]) : null,
+  };
+}
+
+// Remove an axis (horizontal/vertical) constraint from every selected line —
+// the context menu's "toggle off" for an active H/V chip.
+export function removeAxisFromSelection(type) {
+  const lines = selectedLines();
+  const ids = _sketch.constraints
+    .filter((c) => c.type === type && lines.some((l) => l.id === c.line))
+    .map((c) => c.id);
+  if (!ids.length) return `Nothing ${type} in the selection.`;
+  const before = _sketch.toJSON();
+  ids.forEach((id) => _sketch.removeConstraint(id));
+  _selection = [];
+  commit(before);
+  return null;
+}
+
+// modes.js pokes this on every mode switch so mode-dependent CAD UI (the
+// context menu) re-evaluates without a modes → cad UI import cycle.
+export function notifyModeChanged() {
+  emitChanged();
+}
+
+// Shared number formatting for on-canvas labels and menu chips.
+export function formatValue(n) {
+  return fmt(n);
 }
 
 // Signed angle (degrees) from line a's direction to line b's.

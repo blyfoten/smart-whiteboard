@@ -10,7 +10,7 @@
 // Hold Space to temporarily drop into Select without leaving the current mode.
 
 import { pathToPoints, recognizeStroke } from './shapes.js';
-import { cadHandleStroke, cadHandleClick } from './cad/cad-mode.js';
+import { cadHandleStroke, cadHandleClick, notifyModeChanged } from './cad/cad-mode.js';
 import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
 import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
 import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
@@ -68,6 +68,7 @@ export function setMode(mode) {
   _mode = mode;
   _applyModeToCanvas();
   _updateButtons();
+  notifyModeChanged(); // mode-dependent CAD UI (context menu) re-evaluates
 }
 
 export function setSmartShapes(value) {
