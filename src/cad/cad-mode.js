@@ -467,12 +467,12 @@ function commit(before) {
   emitChanged();
 }
 
-// Returns null on success, or a human-readable reason the selection didn't fit.
-export function applyConstraint(type) {
-  const lines = selectedLines();
-  const circles = selectedCircles();
-  const points = selectedPoints();
-  const before = _sketch.toJSON();
+// The shared constraint-application core: `sel` is { lines, circles, points }
+// (model objects). Mutates the sketch; returns null on success or a
+// human-readable reason the selection didn't fit. Used by both the toolbar
+// (current CAD selection) and the voice agent (explicit ids).
+function constrainCore(type, sel) {
+  const { lines, circles, points } = sel;
 
   switch (type) {
     case 'horizontal':
@@ -523,7 +523,16 @@ export function applyConstraint(type) {
     default:
       return `Unknown constraint '${type}'.`;
   }
+  return null;
+}
 
+// Toolbar entry point: apply a constraint to the current CAD selection.
+// Returns null on success, or a human-readable reason the selection didn't fit.
+export function applyConstraint(type) {
+  const sel = { lines: selectedLines(), circles: selectedCircles(), points: selectedPoints() };
+  const before = _sketch.toJSON();
+  const err = constrainCore(type, sel);
+  if (err) return err;
   _selection = [];
   commit(before);
   return null;
@@ -541,15 +550,13 @@ function measuredAngle(la, lb) {
   return (Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y) * 180) / Math.PI;
 }
 
-// Add a dimension for the current selection: line → length, two points →
-// distance, circle → radius, two lines → angle. Prompts with the measured
-// value; the input accepts parameter expressions. Returns null or a reason.
-export function addDimension(promptFn = window.prompt) {
-  const lines = selectedLines();
-  const circles = selectedCircles();
-  const points = selectedPoints();
+// What dimension fits `sel` ({ lines, circles, points }): line → length, two
+// points → distance, circle → radius, two lines → angle. Returns
+// { constraint (sans expr), label, current } or null.
+function dimensionDraft(sel) {
+  const { lines, circles, points } = sel;
 
-  let draft = null; // { constraint (sans expr), label, current }
+  let draft = null;
   if (lines.length === 1 && !points.length && !circles.length) {
     const l = lines[0];
     draft = {
@@ -575,9 +582,17 @@ export function addDimension(promptFn = window.prompt) {
       label: 'Angle (°)',
       current: measuredAngle(lines[0], lines[1]),
     };
-  } else {
-    return 'Select a line (length), two points (distance), a circle (radius), or two lines (angle).';
   }
+  return draft;
+}
+
+const DIM_HINT = 'Select a line (length), two points (distance), a circle (radius), or two lines (angle).';
+
+// Toolbar entry point: dimension the current selection, prompting with the
+// measured value (input accepts parameter expressions). Returns null or a reason.
+export function addDimension(promptFn = window.prompt) {
+  const draft = dimensionDraft({ lines: selectedLines(), circles: selectedCircles(), points: selectedPoints() });
+  if (!draft) return DIM_HINT;
 
   const input = promptFn(`${draft.label} — number or expression (params allowed):`, fmt(draft.current));
   if (input === null || input.trim() === '') return null; // cancelled
@@ -657,6 +672,168 @@ export function removeConstraintById(id) {
   const before = _sketch.toJSON();
   _sketch.removeConstraint(id);
   commit(before);
+}
+
+// --- programmatic API (the voice agent's cad_* tools) ---
+//
+// Mirrors the toolbar commands but addresses geometry by id instead of the
+// interactive CAD selection, so the voice assistant can sketch, constrain,
+// dimension and parametrize without touching the UI. All coordinates here are
+// SCENE units (canvas-actions.js converts from board percent).
+
+function resolveRefs(entityIds, pointIds) {
+  const lines = [];
+  const circles = [];
+  const missing = [];
+  (entityIds || []).forEach((id) => {
+    const e = _sketch.entity(String(id));
+    if (!e) missing.push(String(id));
+    else if (e.type === 'line') lines.push(e);
+    else circles.push(e);
+  });
+  const points = [];
+  (pointIds || []).forEach((id) => {
+    const p = _sketch.point(String(id));
+    if (!p) missing.push(String(id));
+    else points.push(p);
+  });
+  return { lines, circles, points, missing };
+}
+
+// A connected chain of scene-coordinate vertices → sketch lines, with the same
+// auto-constraints as hand-drawn strokes (exact-axis segments get H/V,
+// endpoints merge onto nearby points, open ends stick to lines).
+export function cadApiSketchChain(sceneVerts, closed) {
+  if (!Array.isArray(sceneVerts) || sceneVerts.length < 2) return { error: 'need at least 2 points' };
+  const before = _sketch.toJSON();
+  const { points, lines } = addChainToSketch(
+    sceneVerts.map((v) => ({ x: Number(v.x), y: Number(v.y) })),
+    !!closed
+  );
+  commit(before);
+  return {
+    ok: true,
+    lineIds: lines.map((l) => l.id),
+    pointIds: points.map((p) => p.id),
+  };
+}
+
+export function cadApiSketchCircle(cx, cy, r) {
+  const before = _sketch.toJSON();
+  const c = _sketch.addCircle(Number(cx), Number(cy), Math.max(1, Number(r)));
+  commit(before);
+  return { ok: true, id: c.id, centerPointId: c.c };
+}
+
+// Apply a constraint by ids. Returns null on success or a reason string.
+export function cadApiConstrain(type, entityIds, pointIds) {
+  const sel = resolveRefs(entityIds, pointIds);
+  if (sel.missing.length) return `Unknown id(s): ${sel.missing.join(', ')} — call cad_get_sketch for current ids.`;
+  const before = _sketch.toJSON();
+  const err = constrainCore(type, sel);
+  if (err) return err;
+  commit(before);
+  return null;
+}
+
+// Add a dimension by ids (expr in sketch units / degrees), or change an
+// existing dimension's expression when dimId is given.
+export function cadApiDimension({ entityIds, pointIds, expr, dimId }) {
+  if (expr == null || String(expr).trim() === '') return { error: 'expr is required' };
+  const text = String(expr).trim();
+  try {
+    _sketch.evalDim(text);
+  } catch (e) {
+    return { error: `Bad expression: ${e.message}` };
+  }
+
+  const before = _sketch.toJSON();
+  if (dimId != null) {
+    const c = _sketch.constraint(String(dimId));
+    if (!c || c.expr === undefined) return { error: `No dimension with id '${dimId}'.` };
+    c.expr = text;
+    commit(before);
+    return { ok: true, id: c.id };
+  }
+
+  const sel = resolveRefs(entityIds, pointIds);
+  if (sel.missing.length) return { error: `Unknown id(s): ${sel.missing.join(', ')} — call cad_get_sketch for current ids.` };
+  const draft = dimensionDraft(sel);
+  if (!draft) return { error: DIM_HINT };
+  const con = _sketch.addConstraint({ ...draft.constraint, expr: text });
+  commit(before);
+  return { ok: true, id: con.id, kind: draft.constraint.type };
+}
+
+export function cadApiSetParam(name, expr, remove) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(name || ''))) return { error: 'Invalid parameter name.' };
+  const before = _sketch.toJSON();
+  if (remove) {
+    _sketch.removeParam(String(name));
+  } else {
+    const prev = _sketch.params.find((p) => p.name === name);
+    _sketch.setParam(String(name), String(expr == null ? '0' : expr));
+    if (!Number.isFinite(_sketch.paramScope()[name])) {
+      // Reject an expression that doesn't evaluate (typo'd reference etc.).
+      if (prev) _sketch.setParam(String(name), prev.expr);
+      else _sketch.removeParam(String(name));
+      return { error: `Expression for '${name}' does not evaluate — check names/syntax.` };
+    }
+  }
+  commit(before);
+  return { ok: true, params: _sketch.params.map((p) => ({ ...p })) };
+}
+
+// Delete entities and/or constraints (dimensions included) by id.
+export function cadApiDelete(ids) {
+  const list = (Array.isArray(ids) ? ids : [ids]).map(String);
+  const before = _sketch.toJSON();
+  let removed = 0;
+  for (const id of list) {
+    if (_sketch.entity(id)) { _sketch.removeEntity(id); removed++; }
+    else if (_sketch.constraint(id)) { _sketch.removeConstraint(id); removed++; }
+  }
+  if (!removed) return { error: 'No matching entity or constraint ids.' };
+  _selection = [];
+  commit(before);
+  return { ok: true, removed };
+}
+
+// A full, plain-JSON view of the sketch in SCENE coordinates: entities with
+// their geometry, constraints (dimensions carry expr + value), parameters,
+// DOF and solve status. canvas-actions.js converts coords to board percent.
+export function cadApiSummary() {
+  const scope = _sketch.paramScope();
+  const entities = _sketch.entities.map((e) => {
+    if (e.type === 'line') {
+      const a = _sketch.point(e.p1);
+      const b = _sketch.point(e.p2);
+      return {
+        id: e.id, type: 'line', p1: e.p1, p2: e.p2,
+        a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y },
+        length: Math.hypot(b.x - a.x, b.y - a.y),
+      };
+    }
+    const ctr = _sketch.point(e.c);
+    return { id: e.id, type: 'circle', centerPointId: e.c, center: { x: ctr.x, y: ctr.y }, radius: e.r };
+  });
+  const constraints = _sketch.constraints.map((c) => {
+    const out = { id: c.id, type: c.type };
+    ['line', 'a', 'b', 'circle', 'point', 'p1', 'p2'].forEach((k) => { if (c[k] !== undefined) out[k] = c[k]; });
+    if (c.expr !== undefined) {
+      out.expr = c.expr;
+      try { out.value = _sketch.evalDim(c.expr); } catch (e) { out.value = null; }
+    }
+    return out;
+  });
+  return {
+    points: _sketch.points.map((p) => ({ id: p.id, x: p.x, y: p.y, fixed: isPointFixed(p.id) })),
+    entities,
+    constraints,
+    params: _sketch.params.map((p) => ({ name: p.name, expr: p.expr, value: scope[p.name] })),
+    degreesOfFreedom: _sketch.degreesOfFreedom(),
+    solve: { ok: _status.ok, maxResidual: _status.maxResidual },
+  };
 }
 
 // --- persistence (boards) ---

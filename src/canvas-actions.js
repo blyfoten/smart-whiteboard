@@ -17,6 +17,10 @@ import { buildPoly } from './shapes.js';
 import { snapPointToShapes, toTargetLocal } from './edge-snap.js';
 import { suspend as historySuspend } from './history.js';
 import { appendToOutput } from './output.js';
+import {
+  cadApiSketchChain, cadApiSketchCircle, cadApiConstrain, cadApiDimension,
+  cadApiSetParam, cadApiDelete, cadApiSummary,
+} from './cad/cad-mode.js';
 
 const STROKE = 'black';
 const STROKE_WIDTH = 4;
@@ -841,7 +845,99 @@ export async function executeAction(name, args = {}) {
       clearCanvas(canvas);
       return { ok: true };
     }
+
+    // ---- CAD sketch tools (parametric mode) --------------------------------
+    // Positions come in as board percent and are converted to scene units here;
+    // dimensions/parameters use SCENE units (the numbers shown on the canvas
+    // labels). cad_get_sketch reports both so the model can convert.
+
+    case 'cad_sketch_line': {
+      const a = pctToScene(canvas, args.x1, args.y1);
+      const b = pctToScene(canvas, args.x2, args.y2);
+      const res = cadApiSketchChain([a, b], false);
+      return res.error ? { ok: false, message: res.error } : { ...res, ...cadStatusOf() };
+    }
+    case 'cad_sketch_polyline': {
+      const raw = Array.isArray(args.points) ? args.points : [];
+      if (raw.length < 2) return { ok: false, message: 'need at least 2 points (each {x, y} in percent)' };
+      const verts = raw.map((p) => pctToScene(canvas, p.x, p.y));
+      const res = cadApiSketchChain(verts, args.closed === true);
+      return res.error ? { ok: false, message: res.error } : { ...res, ...cadStatusOf() };
+    }
+    case 'cad_sketch_rect': {
+      const sz = pctLen(canvas, num(args.width, 10), num(args.height, 10));
+      const p = topLeftOf(canvas, args, sz);
+      const res = cadApiSketchChain(
+        [p, { x: p.x + sz.w, y: p.y }, { x: p.x + sz.w, y: p.y + sz.h }, { x: p.x, y: p.y + sz.h }],
+        true
+      );
+      return res.error ? { ok: false, message: res.error } : { ...res, ...cadStatusOf() };
+    }
+    case 'cad_sketch_circle': {
+      const c = pctToScene(canvas, args.cx, args.cy);
+      const r = pctLen(canvas, num(args.radius, 5), 0).w;
+      const res = cadApiSketchCircle(c.x, c.y, r);
+      return res.error ? { ok: false, message: res.error } : { ...res, radiusUnits: round1(r), ...cadStatusOf() };
+    }
+    case 'cad_get_sketch': {
+      const s = cadApiSummary();
+      const pct = (pt) => {
+        const p = sceneToPct(canvas, pt.x, pt.y);
+        return { x: round1(p.x), y: round1(p.y) };
+      };
+      return {
+        points: s.points.map((p) => ({ id: p.id, ...pct(p), fixed: p.fixed })),
+        entities: s.entities.map((e) => (e.type === 'line'
+          ? { id: e.id, type: 'line', p1: e.p1, p2: e.p2, a: pct(e.a), b: pct(e.b), lengthUnits: round1(e.length) }
+          : { id: e.id, type: 'circle', centerPointId: e.centerPointId, center: pct(e.center), radiusUnits: round1(e.radius) })),
+        constraints: s.constraints,
+        params: s.params,
+        degreesOfFreedom: s.degreesOfFreedom,
+        solve: { ok: s.solve.ok, maxResidual: round1(s.solve.maxResidual) },
+        unitsPerPercent: {
+          x: round1(pctLen(canvas, 1, 0).w),
+          y: round1(pctLen(canvas, 0, 1).h),
+        },
+      };
+    }
+    case 'cad_constrain': {
+      const err = cadApiConstrain(String(args.type || ''), args.entityIds, args.pointIds);
+      return err ? { ok: false, message: err } : { ok: true, ...cadStatusOf() };
+    }
+    case 'cad_dimension': {
+      const res = cadApiDimension({
+        entityIds: args.entityIds,
+        pointIds: args.pointIds,
+        expr: args.value,
+        dimId: args.dimId,
+      });
+      return res.error ? { ok: false, message: res.error } : { ...res, ...cadStatusOf() };
+    }
+    case 'cad_set_param': {
+      const res = cadApiSetParam(args.name, args.value, args.remove === true);
+      return res.error ? { ok: false, message: res.error } : { ...res, ...cadStatusOf() };
+    }
+    case 'cad_delete': {
+      const res = cadApiDelete(args.ids);
+      return res.error ? { ok: false, message: res.error } : { ...res, ...cadStatusOf() };
+    }
+
     default:
       return { error: 'unknown action: ' + name };
   }
 }
+
+// Post-operation sketch health for cad_* tool results: did the solver keep up,
+// and how constrained is the sketch now — the model uses this to detect
+// conflicts immediately instead of on the next video frame.
+function cadStatusOf() {
+  const s = cadApiSummary();
+  return {
+    solve: { ok: s.solve.ok, maxResidual: round1(s.solve.maxResidual) },
+    degreesOfFreedom: s.degreesOfFreedom,
+  };
+}
+
+// Debug/test bridge (same spirit as window.canvas / window.cadDebug): lets the
+// console exercise voice tools without a live Gemini session.
+if (typeof window !== 'undefined') window.executeAction = executeAction;
