@@ -21,6 +21,7 @@
 
 import { Line as FabricLine, Circle as FabricCircle, FabricText } from 'fabric';
 import { classifyStroke, pathToPoints, MIN_SIZE } from '../shape-classifier.js';
+import { pointerSlop } from '../pointer.js';
 import { Sketch } from './sketch.js';
 import { solveSketch } from './solver.js';
 import {
@@ -44,14 +45,6 @@ const HIT_EDGE = 16;    // px: click-select distance for lines/circles
 const HIT_DIM = 24;     // px: click radius for dimension labels
 const SNAP_MERGE = 14;  // px: endpoint drawn near an existing point merges
 const SNAP_ONLINE = 10; // px: endpoint drawn near an existing line sticks to it
-
-// A finger or stylus is far less precise than a mouse, so every hit radius is
-// widened on coarse pointers. Read per tap rather than once at load, so a
-// hybrid laptop switching between trackpad and touchscreen stays right.
-function pointerScale() {
-  if (typeof window === 'undefined' || !window.matchMedia) return 1;
-  return window.matchMedia('(pointer: coarse)').matches ? 1.7 : 1;
-}
 
 // Priority nudge (in normalized-distance units) for targets that are small or
 // float above the geometry, so they win a near-tie against a line underneath.
@@ -410,8 +403,7 @@ export function cadHandleStroke(path) {
 // `slop` widens every radius by how far the tap itself wandered.
 function hitTest(x, y, slop = 0) {
   const zoom = (_canvas && _canvas.getZoom()) || 1;
-  const scale = pointerScale();
-  const radius = (px) => (px * scale) / zoom + slop;
+  const radius = (px) => pointerSlop(px) / zoom + slop;
 
   let best = null;
   let bestScore = Infinity;
