@@ -74,6 +74,27 @@ function wobblyRectPts(x, y, w, h, per = 22, bow = 9) {
   return pts;
 }
 
+// A closed heart outline (classic parametric heart), scaled & centered.
+function heartPts(cx, cy, scale, n = 80) {
+  return Array.from({ length: n + 1 }, (_, i) => {
+    const t = (i / n) * 2 * Math.PI;
+    const x = 16 * Math.sin(t) ** 3;
+    const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    return { x: jitter(cx + x * scale), y: jitter(cy - y * scale) };
+  });
+}
+
+// A closed triangle.
+function trianglePts(cx, cy, r, per = 24) {
+  const v = [0, 1, 2, 0].map((k) => ({
+    x: cx + r * Math.cos((k * 2 * Math.PI) / 3 - Math.PI / 2),
+    y: cy + r * Math.sin((k * 2 * Math.PI) / 3 - Math.PI / 2),
+  }));
+  const pts = [];
+  for (let i = 0; i < 3; i++) pts.push(...line(v[i], v[i + 1], per));
+  return pts;
+}
+
 // ---- tests ----
 check('horizontal line → line', () => {
   const d = classifyStroke(line({ x: 40, y: 100 }, { x: 360, y: 108 }));
@@ -110,9 +131,132 @@ check('small square with shaky sides → rect', () => {
   assert.equal(d?.type, 'rect');
 });
 
+check('heart → not a rect (stays ink)', () => {
+  const d = classifyStroke(heartPts(200, 200, 9));
+  assert.notEqual(d?.type, 'rect');
+});
+
+check('triangle → polygon', () => {
+  const d = classifyStroke(trianglePts(200, 200, 120));
+  assert.equal(d?.type, 'polygon');
+  assert.equal(d.points.length, 3);
+});
+
+check('closed notched (L) outline → polygon', () => {
+  // A rectangle with a bite taken out of one corner (6 vertices), closed.
+  const c = [
+    { x: 60, y: 60 }, { x: 260, y: 60 }, { x: 260, y: 160 },
+    { x: 160, y: 160 }, { x: 160, y: 260 }, { x: 60, y: 260 }, { x: 60, y: 60 },
+  ];
+  const pts = [];
+  for (let i = 0; i < c.length - 1; i++) pts.push(...line(c[i], c[i + 1], 18));
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polygon');
+  assert.ok(d.points.length >= 5 && d.points.length <= 7);
+});
+
+check('circle stays circle (not polygon)', () => {
+  assert.equal(classifyStroke(ellipsePts(200, 200, 90, 90))?.type, 'circle');
+});
+
+check('clean rectangle stays rect (not polygon)', () => {
+  assert.equal(classifyStroke(rectPts(60, 60, 240, 140))?.type, 'rect');
+});
+
 check('arrow → arrow', () => {
   const d = classifyStroke(arrowPts({ x: 60, y: 200 }, { x: 320, y: 200 }));
   assert.equal(d?.type, 'arrow');
+});
+
+check('L-shape → polyline (3 vertices)', () => {
+  const pts = [
+    ...line({ x: 80, y: 60 }, { x: 80, y: 260 }, 30),
+    ...line({ x: 80, y: 260 }, { x: 300, y: 260 }, 30),
+  ];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+  assert.equal(d.points.length, 3);
+});
+
+check('staircase → polyline (multiple segments)', () => {
+  const pts = [
+    ...line({ x: 60, y: 60 }, { x: 160, y: 60 }, 20),
+    ...line({ x: 160, y: 60 }, { x: 160, y: 160 }, 20),
+    ...line({ x: 160, y: 160 }, { x: 260, y: 160 }, 20),
+  ];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+  assert.ok(d.points.length >= 4);
+});
+
+check('3-step staircase (alternating) → polyline', () => {
+  const corners = [
+    { x: 60, y: 60 }, { x: 160, y: 60 }, { x: 160, y: 160 }, { x: 260, y: 160 },
+    { x: 260, y: 260 }, { x: 360, y: 260 },
+  ];
+  const pts = [];
+  for (let i = 0; i < corners.length - 1; i++) pts.push(...line(corners[i], corners[i + 1], 20));
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+});
+
+check('U-shape → polyline (4 vertices)', () => {
+  const pts = [
+    ...line({ x: 80, y: 60 }, { x: 80, y: 260 }, 25),
+    ...line({ x: 80, y: 260 }, { x: 280, y: 260 }, 25),
+    ...line({ x: 280, y: 260 }, { x: 280, y: 60 }, 25),
+  ];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+  assert.equal(d.points.length, 4);
+});
+
+check('L with a bowed segment → still polyline', () => {
+  // Vertical leg, then a horizontal leg that bows (hand-drawn) — the bow must
+  // not get rejected; it should merge out, leaving the one real corner.
+  const horiz = Array.from({ length: 41 }, (_, i) => {
+    const t = i / 40;
+    return { x: jitter(80 + 220 * t), y: jitter(260 + Math.sin(t * Math.PI) * 14) };
+  });
+  const pts = [...line({ x: 80, y: 60 }, { x: 80, y: 260 }, 25), ...horiz];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+});
+
+check('straight line stays line (not polyline)', () => {
+  const d = classifyStroke(line({ x: 40, y: 100 }, { x: 360, y: 108 }));
+  assert.equal(d?.type, 'line');
+});
+
+check('slightly-bent line → line (not split into segments)', () => {
+  const pts = [
+    ...line({ x: 50, y: 100 }, { x: 230, y: 116 }, 20),
+    ...line({ x: 230, y: 116 }, { x: 410, y: 104 }, 20),
+  ];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'line');
+});
+
+check('near-horizontal line snaps to horizontal', () => {
+  const d = classifyStroke(line({ x: 40, y: 100 }, { x: 360, y: 122 }));
+  assert.equal(d?.type, 'line');
+  assert.equal(d.a.y, d.b.y); // snapped flat
+});
+
+check('near-vertical line snaps to vertical', () => {
+  const d = classifyStroke(line({ x: 100, y: 40 }, { x: 118, y: 340 }));
+  assert.equal(d?.type, 'line');
+  assert.equal(d.a.x, d.b.x); // snapped upright
+});
+
+check('smooth open arc → null (not polyline)', () => {
+  // A half-circle arc: gentle, continuous bend — must NOT straighten to segments.
+  // Low jitter keeps it an unambiguous curve (all turns one direction).
+  const pts = Array.from({ length: 41 }, (_, i) => {
+    const t = (i / 40) * Math.PI;
+    return { x: jitter(200 + 120 * Math.cos(t), 0.8), y: jitter(200 + 120 * Math.sin(t), 0.8) };
+  });
+  assert.equal(classifyStroke(pts), null);
 });
 
 check('tiny stroke → null (stays ink)', () => {
@@ -127,6 +271,42 @@ check('scribble / handwriting → null (stays ink)', () => {
     pts.push({ x: 80 + i * 4, y: 150 + Math.sin(i * 1.7) * 35 + (Math.random() - 0.5) * 20 });
   }
   assert.equal(classifyStroke(pts), null);
+});
+
+check('L-polyline ending in an arrowhead → polyline + arrowEnd', () => {
+  // Right, then down, then a small V head drawn back up-left then up-right.
+  const a = { x: 100, y: 100 };
+  const b = { x: 280, y: 100 };
+  const c = { x: 280, y: 260 }; // tip
+  const w1 = { x: 262, y: 235 };
+  const w2 = { x: 297, y: 236 };
+  const pts = [...line(a, b, 25), ...line(b, c, 25), ...line(c, w1, 6), ...line(w1, c, 6), ...line(c, w2, 6)];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+  assert.equal(d.arrowEnd, true);
+  // Head stripped: the shaft keeps just its 3 corner vertices.
+  assert.equal(d.points.length, 3);
+});
+
+check('straight stroke with one-wing head → arrow-ended line', () => {
+  const a = { x: 100, y: 300 };
+  const tip = { x: 330, y: 300 };
+  const w = { x: 305, y: 282 };
+  const pts = [...line(a, tip, 30), ...line(tip, w, 7)];
+  const d = classifyStroke(pts);
+  // Either the dedicated straight-arrow detector or the polyline path may
+  // catch this — both must mark it as an arrow.
+  assert.ok(d?.type === 'arrow' || (d?.type === 'line' && d.arrowEnd === true), `got ${JSON.stringify(d)}`);
+});
+
+check('plain L-polyline has no arrowEnd', () => {
+  const pts = [
+    ...line({ x: 100, y: 100 }, { x: 280, y: 100 }, 25),
+    ...line({ x: 280, y: 100 }, { x: 280, y: 260 }, 25),
+  ];
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'polyline');
+  assert.ok(!d.arrowEnd);
 });
 
 console.log(`\n${passed} checks passed.`);

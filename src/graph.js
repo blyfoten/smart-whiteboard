@@ -3,6 +3,7 @@
 import Chart from 'chart.js/auto';
 import { getCanvas, getCanvasBoundingBox } from './canvas.js';
 import { getMode } from './modes.js';
+import { suspend as historySuspend, pushComposite } from './history.js';
 import { Image as FabricImage } from 'fabric';
 
 // Offscreen canvas for rendering the chart
@@ -32,7 +33,7 @@ function _arrowhead(ctx, x, y, dir) {
 // Chart.js plugin: draw arrowheads at the axis ends and the axis names (x and
 // the dependent variable) beside those ends, instead of Chart's built-in axis
 // titles (which sit awkwardly mid-axis when the axes pass through the origin).
-function _axesPlugin(depVar) {
+function _axesPlugin(depVar, fontScale = 1) {
   return {
     id: 'handDrawnAxes',
     afterDatasetsDraw(chart) {
@@ -50,7 +51,7 @@ function _axesPlugin(depVar) {
       // them centered on the line for an origin-positioned axis, so its own y
       // labels are disabled (ticks.display:false) and we place them here. Skip 0
       // (the x-axis already labels the origin).
-      ctx.font = "15px 'Caveat', cursive";
+      ctx.font = `${Math.round(12 * fontScale)}px 'Caveat', cursive`;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
       (ys.ticks || []).forEach((t) => {
@@ -73,7 +74,7 @@ function _axesPlugin(depVar) {
       _arrowhead(ctx, xEnd, y0, 'right');
       _arrowhead(ctx, x0, yEnd, 'up');
 
-      ctx.font = "600 18px 'Caveat', cursive";
+      ctx.font = `600 ${Math.round(14 * fontScale)}px 'Caveat', cursive`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       ctx.fillText('x', xEnd + 6, y0);
@@ -87,8 +88,10 @@ function _axesPlugin(depVar) {
 function _getOffscreenCanvas() {
   if (!_offscreenCanvas) {
     _offscreenCanvas = document.createElement('canvas');
-    _offscreenCanvas.width = 500;
-    _offscreenCanvas.height = 350;
+    // Half the previous pixel size → a ~50% smaller graph on the board, while
+    // font sizes and line widths (kept in px) render at the same displayed size.
+    _offscreenCanvas.width = 250;
+    _offscreenCanvas.height = 175;
     _offscreenCanvas.style.display = 'none';
     document.body.appendChild(_offscreenCanvas);
   }
@@ -102,20 +105,39 @@ function _gridlinesOn() {
 
 // Re-render the most recent graph (e.g. after toggling gridlines in settings).
 export function redrawLastGraph() {
-  if (_lastGraph) renderGraph(_lastGraph.dataPoints, _lastGraph.dependentVariable);
+  if (_lastGraph) renderGraph(_lastGraph.dataPoints, _lastGraph.dependentVariable, _lastGraph.meta);
 }
 
-export function renderGraph(dataPoints, dependentVariable) {
+// renderGraph(points, depVar, meta?, targetObj?) — meta carries the plot params
+// (expression, variable, x/y limits, font scale) so the graph can be re-plotted
+// later. With targetObj, re-plot ONLY that graph in place (keeping its position
+// & size); without it, add a NEW independent graph below existing content.
+export function renderGraph(dataPoints, dependentVariable, meta = {}, targetObj = null) {
   const canvas = getCanvas();
   if (!canvas) {
     console.error('Fabric canvas not found');
     return;
   }
-  _lastGraph = { dataPoints, dependentVariable };
+  _lastGraph = { dataPoints, dependentVariable, meta };
+
+  const replacing = targetObj && canvas.getObjects().includes(targetObj);
+  // Graphs render at their displayed pixel size (image scale stays 1), so line
+  // thickness and font are constant px and tick density scales with size & font.
+  const W = Math.round(Math.max(120, Math.min(1400, meta.width || 200)));
+  const H = Math.round(Math.max(90, Math.min(1000, meta.height || 140)));
+  const placement = replacing ? { left: targetObj.left, top: targetObj.top } : null;
 
   const offscreen = _getOffscreenCanvas();
+  offscreen.width = W;
+  offscreen.height = H;
   const gridOn = _gridlinesOn();
-  const tickFont = { family: 'Caveat, cursive', size: 15 };
+  const fontScale = Number.isFinite(meta.fontScale) ? meta.fontScale : 1;
+  const tickFont = { family: 'Caveat, cursive', size: Math.round(12 * fontScale) };
+  // More room (smaller font, bigger graph) → more intervals.
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const xTicks = clamp(Math.round(W / (24 * fontScale)), 3, 30);
+  const yTicks = clamp(Math.round(H / (22 * fontScale)), 3, 22);
+  const pad = { left: 8, right: Math.round(20 + 16 * fontScale), top: Math.round(14 + 14 * fontScale), bottom: 8 };
 
   // A grid config: tick marks always (on the axes), full gridlines only when on.
   const grid = {
@@ -139,7 +161,7 @@ export function renderGraph(dataPoints, dependentVariable) {
           label: `${dependentVariable} = f(x)`,
           data: dataPoints.map(p => ({ x: p.x, y: p.y })),
           borderColor: 'rgb(75, 192, 192)',
-          borderWidth: 2.5,
+          borderWidth: 2,
           tension: 0.25,
           fill: false,
           pointRadius: 0,
@@ -148,14 +170,17 @@ export function renderGraph(dataPoints, dependentVariable) {
       options: {
         responsive: false,
         animation: false,
+        // Render the PNG at exactly the offscreen pixel size (no retina upscaling),
+        // so the Fabric image's natural size == our intended size.
+        devicePixelRatio: 1,
         // Extra right/top room so the axis arrows + x/y names sit past the last tick.
-        layout: { padding: { left: 8, right: 34, top: 26, bottom: 8 } },
+        layout: { padding: pad },
         scales: {
           x: {
             type: 'linear',
             position: { y: 0 }, // x-axis drawn through the origin
             // Hide the 0 at the origin; the axes crossing already marks it.
-            ticks: { color: INK, font: tickFont, maxTicksLimit: 11, padding: 6, callback: (v) => (v === 0 ? '' : v) },
+            ticks: { color: INK, font: tickFont, maxTicksLimit: xTicks, padding: 6, callback: (v) => (v === 0 ? '' : v) },
             border: { color: INK, width: 2 },
             grid,
           },
@@ -163,8 +188,10 @@ export function renderGraph(dataPoints, dependentVariable) {
             position: { x: 0 }, // y-axis drawn through the origin
             // Chart centers labels on an origin axis; we draw them ourselves to
             // the left in the plugin. Keep the tick marks (grid.drawTicks).
-            ticks: { display: false, maxTicksLimit: 9 },
+            ticks: { display: false, maxTicksLimit: yTicks },
             border: { color: INK, width: 2 },
+            min: Number.isFinite(meta.ymin) ? meta.ymin : undefined,
+            max: Number.isFinite(meta.ymax) ? meta.ymax : undefined,
             grid,
           },
         },
@@ -173,7 +200,7 @@ export function renderGraph(dataPoints, dependentVariable) {
           tooltip: { enabled: false },
         },
       },
-      plugins: [_axesPlugin(dependentVariable)],
+      plugins: [_axesPlugin(dependentVariable, fontScale)],
     });
 
     // Chart.js needs a frame to render with animation:false
@@ -189,10 +216,10 @@ export function renderGraph(dataPoints, dependentVariable) {
       const imgEl = new window.Image();
       imgEl.onload = () => {
         const fabricImg = new FabricImage(imgEl, {
-          left,
-          top,
-          scaleX: 0.8,
-          scaleY: 0.8,
+          left: placement ? placement.left : left,
+          top: placement ? placement.top : top,
+          scaleX: 1, // offscreen is already the displayed pixel size
+          scaleY: 1,
           selectable: true,
           hasControls: true,
           hasBorders: true,
@@ -200,14 +227,20 @@ export function renderGraph(dataPoints, dependentVariable) {
           cornerSize: 12,
           transparentCorners: false,
           _isGraph: true, // tag for identification
+          _plot: { ...meta, width: W, height: H }, // remembered params (incl. size)
         });
 
-        // Remove previous graph images
-        canvas.getObjects().forEach(obj => {
-          if (obj._isGraph) canvas.remove(obj);
+        // Replace only the targeted graph (re-plot), or just add a new one — as
+        // one undo step either way.
+        const removed = replacing ? [targetObj] : [];
+        historySuspend(() => {
+          removed.forEach((obj) => canvas.remove(obj));
+          canvas.add(fabricImg);
         });
-
-        canvas.add(fabricImg);
+        pushComposite((c) => historySuspend(() => {
+          c.remove(fabricImg);
+          removed.forEach((obj) => c.add(obj));
+        }));
         // Only leave the graph selected if the user is actually in Select mode;
         // otherwise drop the selection so drawing/shapes aren't interrupted.
         if (getMode() === 'select') {

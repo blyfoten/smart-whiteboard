@@ -1,6 +1,7 @@
 // src/canvas.js — canvas init, resize, bounding box, crop, pinch-zoom, undo
 
-import { Canvas, PencilBrush, StaticCanvas, Text, Point } from 'fabric';
+import { Canvas, PencilBrush, StaticCanvas, Point } from 'fabric';
+import { undo as historyUndo, suspend as historySuspend, pushComposite } from './history.js';
 
 let canvasInstance = null;
 let _isPinching = false;
@@ -22,6 +23,8 @@ function _getTouchCenter(t1, t2) {
 
 function _setupPinchZoom(canvas) {
   const upperEl = canvas.upperCanvasEl;
+  let _prevDrawing = false;
+  let _prevSelection = false;
 
   // Discard any free-draw stroke that's mid-flight (e.g. the first finger of a
   // pinch already pressed down) so it isn't committed as a stray dot.
@@ -40,6 +43,9 @@ function _setupPinchZoom(canvas) {
   upperEl.addEventListener('touchstart', (e) => {
     if (e.touches.length === 2) {
       _isPinching = true;
+      // Remember the current mode so we can restore it after the pinch.
+      _prevDrawing = canvas.isDrawingMode;
+      _prevSelection = canvas.selection;
       canvas.isDrawingMode = false;
       canvas.selection = false;
       abortFreeDraw();
@@ -84,8 +90,10 @@ function _setupPinchZoom(canvas) {
     if (e.touches.length < 2 && _isPinching) {
       _isPinching = false;
       abortFreeDraw();
-      canvas.isDrawingMode = true;
-      canvas.selection = false;
+      // Restore whatever mode was active before the pinch instead of forcing
+      // draw mode (a pinch in Select mode would otherwise kick back to drawing).
+      canvas.isDrawingMode = _prevDrawing;
+      canvas.selection = _prevSelection;
     }
   });
 }
@@ -135,17 +143,7 @@ export function getCanvas() {
 }
 
 export function undoLast(canvas) {
-  if (!canvas) return;
-  const objects = canvas.getObjects();
-  if (objects.length === 0) return;
-  const last = objects[objects.length - 1];
-  canvas.remove(last);
-  // If this object replaced some handwriting in place (extract-in-place), bring
-  // the original strokes back so a single Undo fully reverses the replacement.
-  if (Array.isArray(last._replacedInk)) {
-    last._replacedInk.forEach((o) => canvas.add(o));
-  }
-  canvas.requestRenderAll();
+  historyUndo(canvas);
 }
 
 export function resizeCanvas(canvas) {
@@ -211,6 +209,33 @@ export async function cropCanvasToBoundingBox(canvas) {
   return tempCanvas.toDataURL({ format: 'jpeg', quality: 0.8 });
 }
 
+// Crop only the given objects to a white-backed JPEG data URL (so unrelated
+// clutter elsewhere on the board is excluded). Used by region/ink-scoped analyze.
+export async function cropObjects(canvas, objects) {
+  if (!objects || objects.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  objects.forEach((o) => {
+    const r = o.getBoundingRect(true, false);
+    minX = Math.min(minX, r.left);
+    minY = Math.min(minY, r.top);
+    maxX = Math.max(maxX, r.left + r.width);
+    maxY = Math.max(maxY, r.top + r.height);
+  });
+  const pad = 12;
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+
+  const tempCanvas = new StaticCanvas(null, { backgroundColor: 'white', width, height });
+  const clones = await Promise.all(objects.map((o) => o.clone()));
+  clones.forEach((o) => {
+    o.set({ left: o.left - minX, top: o.top - minY, selectable: false, evented: false });
+    tempCanvas.add(o);
+  });
+  tempCanvas.renderAll();
+  return tempCanvas.toDataURL({ format: 'jpeg', quality: 0.8 });
+}
+
 export function saveScreenshot(canvas) {
   if (!canvas) return;
   // Temporarily deselect so selection borders don't appear in screenshot
@@ -253,21 +278,20 @@ export function saveScreenshot(canvas) {
 
 export function clearCanvas(canvas) {
   if (!canvas) return;
-  canvas.clear();
-  canvas.backgroundColor = 'white';
+  // Record the clear as one undoable step that restores everything.
+  const removed = canvas.getObjects().slice();
+  const prevEq = window.extractedEquationData;
+  historySuspend(() => {
+    canvas.clear();
+    canvas.backgroundColor = 'white';
+  });
   canvas.requestRenderAll();
   window.extractedEquationData = null;
+  if (removed.length) {
+    pushComposite((c) => {
+      removed.forEach((o) => c.add(o));
+      window.extractedEquationData = prevEq;
+    });
+  }
 }
 
-export function addReadyIndicator(canvas) {
-  const testText = new Text('Canvas Ready', {
-    left: 50,
-    top: 20,
-    fill: 'green',
-    fontSize: 16,
-    selectable: false,
-    evented: false,
-  });
-  canvas.add(testText);
-  canvas.renderAll();
-}

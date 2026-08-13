@@ -101,9 +101,9 @@
 
   <header class="hero">
     <h1>Smart Whiteboard — Modernization &amp; Feature Plan</h1>
-    <div class="sub">Draft v0.15 · 2026-06-24 · the <strong>voice agent</strong> can now analyze handwriting, solve, and show steps too — the same actions as the contextual menu, by voice.</div>
+    <div class="sub">Draft v0.20 · 2026-06-25 · ⛶ <strong>Analyze a region</strong> — drag a box around an equation on a cluttered board to analyze just that ink. Plus full <strong>undo history</strong> (movement &amp; edits) and snap-undo that restores the original stroke.</div>
     <div class="draft-note">
-      🛠️ <strong>Living sketch — iterate freely.</strong> v0.15: voice tools reach <strong>parity with the contextual menu</strong> — new <code>analyze_equation</code> / <code>solve_equation</code> / <code>show_steps</code> tools let you say “read this and solve it step by step with the p-q formula” and get the same on-board result. v0.14: <strong>Solve =0 and Steps render their result on the whiteboard</strong> (Caveat, blue, below the equation; one Undo removes it) in addition to the output panel, and <strong>Steps offers a method submenu</strong> when several apply. v0.13: analyzing a drawing leaves the result <strong>selected with a floating action menu</strong> beside it — content-aware buttons (Plot the function, Solve =0, step-by-step with the right method e.g. p-q formula). The standalone Solve button is gone (now contextual); AI-model + smart-shapes settings and the legacy/dev tools moved into a <strong>⚙ Settings popover</strong>. v0.11: handwriting font <strong>self-hosted</strong>; the extracted equation <strong>replaces the handwritten strokes in place</strong> (fit-to-width, superscript exponents, implicit-multiplication asterisks dropped), one Undo restores the ink. v0.9: <strong>§2 voice mode — first slice shipped.</strong> A 🎤 Voice toggle streams mic audio + whiteboard video to a server-side Gemini Live relay and plays back the model’s spoken replies. ⚠️ Browsers only allow the mic on <b>https://</b> or localhost — the plain-HTTP preview can’t use it yet. Earlier: §1 shapes, all of §3, §4 hardening.
+      🛠️ <strong>Living sketch — iterate freely.</strong> v0.17: multi-segment strokes snap to a clean <strong>polyline (open) or polygon (closed)</strong> — RDP corner detection with shallow-vertex merging (tolerates a wobbly/bowed segment), near-axis segments snap to H/V, and curves/scribbles stay ink. Every <strong>vertex is a draggable handle</strong> in Select mode. v0.15: voice tools reach <strong>parity with the contextual menu</strong> — new <code>analyze_equation</code> / <code>solve_equation</code> / <code>show_steps</code> tools. v0.14: <strong>Solve =0 and Steps render their result on the whiteboard</strong> (Caveat, blue, below the equation; one Undo removes it) in addition to the output panel, and <strong>Steps offers a method submenu</strong> when several apply. v0.13: analyzing a drawing leaves the result <strong>selected with a floating action menu</strong> beside it — content-aware buttons (Plot the function, Solve =0, step-by-step with the right method e.g. p-q formula). The standalone Solve button is gone (now contextual); AI-model + smart-shapes settings and the legacy/dev tools moved into a <strong>⚙ Settings popover</strong>. v0.11: handwriting font <strong>self-hosted</strong>; the extracted equation <strong>replaces the handwritten strokes in place</strong> (fit-to-width, superscript exponents, implicit-multiplication asterisks dropped), one Undo restores the ink. v0.9: <strong>§2 voice mode — first slice shipped.</strong> A 🎤 Voice toggle streams mic audio + whiteboard video to a server-side Gemini Live relay and plays back the model’s spoken replies. ⚠️ Browsers only allow the mic on <b>https://</b> or localhost — the plain-HTTP preview can’t use it yet. Earlier: §1 shapes, all of §3, §4 hardening.
       <span class="badge decided" style="margin-left:4px">green = decided</span>
       <span class="badge open">amber = open question</span>
     </div>
@@ -351,8 +351,56 @@
     </li>
   </ol>
 
+  <!-- ============================================================ -->
+  <h2><span class="num">6</span>Sessions &amp; saved state <span class="star">★ new feature</span></h2>
+  <p class="section-lead">
+    The board is ephemeral today — a reload loses everything. Persist progressively: lightweight
+    user state in <strong>cookies</strong> now, the drawing itself next, and eventually real accounts &amp;
+    cloud sync. Each phase stands alone and ships independently.
+  </p>
+
+  <div class="card">
+    <h3>6.1 — User state in cookies <span style="color:var(--green)">✓ first slice</span></h3>
+    <div class="badges"><span class="badge decided">✓ shipped</span><span class="badge p-high">High</span></div>
+    <p class="now">Was: every preference reset to its default on each load.</p>
+    <ul>
+      <li>✅ <code>src/state.js</code>: tiny cookie helpers + an anonymous, persistent <code>sw_uid</code> (sets up future account linking).</li>
+      <li>✅ Settings persist across reloads — AI model, smart-shapes mode, edge snapping, graph gridlines — restored to the controls before the modules read them, re-saved on change (1-year cookies, <code>SameSite=Lax</code>).</li>
+      <li>Cookies are ~4&nbsp;KB, so they hold <em>preferences &amp; identity</em>, not the drawing — that's 6.2.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>6.2 — Autosave the board (local)</h3>
+    <div class="badges"><span class="badge p-high">High</span></div>
+    <ul>
+      <li>Serialize the canvas (<code>toJSON</code> with our custom props — <code>_isShape</code>, <code>_edgeAnchors</code>, node controls) to <strong>localStorage</strong> on a debounced change; restore on load.</li>
+      <li>Re-establish object references after load (edge anchors point at object instances) and re-attach node-editing controls.</li>
+      <li>"New / Restore" affordance; keep the last <em>N</em> autosaves so a clear is recoverable beyond the single undo step.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>6.3 — Named boards &amp; sessions</h3>
+    <div class="badges"><span class="badge p-med">Medium</span></div>
+    <ul>
+      <li>Multiple saved boards keyed by the <code>sw_uid</code>; thumbnails, rename, delete; deep-link a board by id.</li>
+      <li>A board id in the URL so a session can be resumed or shared (read-only first).</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>6.4 — Accounts &amp; cloud sync (Google sign-in)</h3>
+    <div class="badges"><span class="badge open">amber = open question</span><span class="badge p-low">Later</span></div>
+    <ul>
+      <li>Google OAuth sign-in; on first login, claim the anonymous <code>sw_uid</code>'s boards so nothing is lost.</li>
+      <li>Server-side board storage keyed by account; sync across devices. Needs real auth + a datastore (the current rate-limiter/CORS work in §4 is the groundwork).</li>
+      <li class="qbox">Open: self-hosted datastore vs a managed backend? Sharing/collaboration model (the voice mode §2 hints at multi-user)?</li>
+    </ul>
+  </div>
+
   <footer>
-    Draft v0.5 · edit me at <code>docs/improvement-plan.html</code> · served live at <code>/plan</code><br>
+    Draft v0.20 · edit me at <code>docs/improvement-plan.html</code> · served live at <code>/plan</code><br>
     Sources: OpenAI &amp; Google AI developer docs (Jun 2026), Anthropic model reference.
   </footer>
 

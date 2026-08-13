@@ -40,8 +40,10 @@ Providers live behind a small interface in **`providers/`**: `openai.js`, `gemin
 - `equation-menu.js` — Word-style floating action menu shown next to a freshly analyzed equation. Content-aware (a function → Plot / Solve =0 / Steps); AI actions coerce the `math` model to `gpt`. Repositions on `after:render`, dismisses on `selection:cleared`/Escape.
 - `ui.js` — **all** button/dropdown event wiring (`initializeEventListeners`), the `currentModel` state (`getCurrentModel()`), the ⚙ Settings popover (`initSettingsMenu`), and the double-click-to-add-IText behavior. (Solving is contextual now — no standalone Solve button.)
 - `output.js` — the "Solution Output" panel: `appendToOutput()` result cards, clear, mobile collapse (`initOutputPanel`).
-- `modes.js` — interaction modes (draw/select/shapes), the toolbar + Space-to-select, and the shape-beautify hook.
-- `shape-classifier.js` (pure geometry, unit-tested) + `shapes.js` (Fabric builders) — freehand stroke → clean primitive recognition.
+- `modes.js` — interaction modes (draw/select/shapes), the toolbar + Space-to-select, the shape-beautify hook, Del-to-delete, and re-clicking the active Draw/Shapes button to toggle the sub-toolbar.
+- `draw-settings.js` (pen/shape colour, fill colour+opacity, corner radius; persisted in the `sw_draw` cookie) + `draw-toolbar.js` (the contextual sub-toolbar UI below the top bar) — one stroke colour drives both the pen and recognized shapes.
+- `shape-classifier.js` (pure geometry, unit-tested) + `shapes.js` (Fabric builders) — freehand stroke → clean primitive recognition (line, **open polyline** & **closed polygon** via RDP straightening + shallow-vertex merging, arrow, rect, ellipse).
+- `node-edit.js` — `enablePointEditing(poly)` gives a Fabric Polyline/Polygon one draggable handle per vertex (custom controls) so lines/segments can be reshaped in Select mode; body-drag still moves it. Recognized lines/polylines/polygons are built as editable Polylines/Polygons.
 - `graph.js` — renders Chart.js to an **offscreen** canvas, then inserts the result as a Fabric image object (tagged `_isGraph`) onto the whiteboard.
 - `speech.js` — Web Speech API voice commands (note: locale is hardcoded to `sv-SE`).
 
@@ -50,7 +52,8 @@ Providers live behind a small interface in **`providers/`**: `openai.js`, `gemin
 ### Key cross-cutting patterns
 
 - **All UI behavior lives in the bundle.** `public/index.html` has **no inline script** (de-duplicated in §4.2) — every handler is wired in `src/` on `DOMContentLoaded`. A few `window` globals remain as a light bridge/state holder: `window.canvas`, `window.solveEquation`, `window.extractedEquationData` (last extracted equation), and `window.appendToOutput` (back-compat alias; `api.js` imports `appendToOutput` from `output.js` directly).
-- **End-to-end analyze flow:** draw → `cropCanvasToBoundingBox` (JPEG data URL) → `POST /extract` (`{ image, provider }`) → store JSON on `window.extractedEquationData` → replace the handwriting with clean text in place → open the contextual menu. Plotting is no longer automatic: the menu's **Plot** action (or the 📈 toolbar button) calls `drawGraph()` → `/graph` → `renderGraph` draws via Chart.js offscreen and adds a Fabric image (`_isGraph`).
+- **End-to-end analyze flow:** draw → collect plain ink Paths (or the ink inside a drag-selected region via the ⛶ "Analyze region" button, `region-select.js`) → `cropObjects` (JPEG of just that ink) → `POST /extract` (`{ image, provider }`) → store JSON on `window.extractedEquationData` → replace the ink with clean text in place → open the contextual menu. Plotting is not automatic: the menu's **Plot** action (or the 📈 toolbar button) calls `drawGraph()` → `/graph` → `renderGraph` draws via Chart.js offscreen and adds a Fabric image (`_isGraph`).
+- **Undo** is a command stack (`history.js`): adds/removals/modifications recorded via canvas events; multi-step ops (smart-shape snap, extract-in-place, clear) push one composite by suspending recording. Snapping a shape no longer leaves a ghost — undo restores the original stroke.
 
 ## Notes / known rough edges
 

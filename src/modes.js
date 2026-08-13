@@ -8,12 +8,27 @@
 // Hold Space to temporarily drop into Select without leaving the current mode.
 
 import { pathToPoints, recognizeStroke } from './shapes.js';
+import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
+import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
+import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
+import { deleteActiveSelection } from './equation-menu.js';
+import { getDrawColor, computedShapeFill, getCornerRadius, getLineStyle } from './draw-settings.js';
+import { toggleSubToolbar, showSubToolbar, isSubToolbarOpen } from './draw-toolbar.js';
 
 let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
+let _edgeSnap = 'on';               // 'on' | 'off' — endpoint edge-snap + sticky anchors
 let _canvas = null;
 
-const GHOST_OPACITY = 0.3;          // faded original stroke kept under the snapped shape
+const EDGE_SNAP_PX = 22;            // screen-pixel radius for endpoint edge-snapping
+
+export function getEdgeSnap() {
+  return _edgeSnap;
+}
+
+export function setEdgeSnap(value) {
+  if (['on', 'off'].includes(value)) _edgeSnap = value;
+}
 
 export function getMode() {
   return _mode;
@@ -61,6 +76,90 @@ function _shouldBeautify() {
   return false;
 }
 
+// Pull a just-recognized polyline/line's first & last vertex onto a nearby
+// existing shape edge. The new shape isn't on the canvas yet, and its `points`
+// are still in scene coordinates (no transform applied), so we can read/write
+// them directly. Records the snapped target on the shape for later anchoring.
+function _snapEndpointsToEdges(shape, indices) {
+  if (_edgeSnap !== 'on') return;
+  const pts = shape.points;
+  if (!pts || pts.length < 2) return;
+  const targets = _canvas.getObjects().filter((o) => o._isShape && !o._isGhost && o !== shape);
+  if (!targets.length) return;
+
+  const maxDist = EDGE_SNAP_PX / (_canvas.getZoom() || 1); // ~constant on screen
+  let changed = false;
+  const anchors = {};
+  (indices || [0, pts.length - 1]).forEach((i) => {
+    const hit = snapPointToShapes(pts[i], targets, maxDist);
+    if (hit) {
+      pts[i] = hit.point;
+      // Pin the vertex to a fixed spot in the target's local frame so it follows
+      // the target when it moves/scales (sticky anchoring).
+      anchors[i] = { target: hit.target, local: toTargetLocal(hit.target, hit.point) };
+      changed = true;
+    }
+  });
+  if (changed) {
+    shape._edgeAnchors = anchors;
+    shape.setBoundingBox(true);
+    shape.setCoords();
+  }
+}
+
+// Re-pin every anchored polyline vertex onto its target's current edge position,
+// so anchored nodes follow a shape as it's moved/scaled. `skip` is the object
+// currently being dragged (don't fight its own drag).
+function _reapplyAnchors(skip) {
+  if (_edgeSnap !== 'on') return;
+  const objs = _canvas.getObjects();
+  let any = false;
+  for (const poly of objs) {
+    if (poly === skip || !poly._edgeAnchors) continue;
+    // While an object is part of an active (multi-) selection its transform is
+    // group-relative, so applyVertexSceneMove's canvas-space math would corrupt
+    // its points and make it jump. The whole selection moves rigidly anyway, so
+    // the anchored vertices stay glued without any re-pinning.
+    if (poly.group) continue;
+    for (const key of Object.keys(poly._edgeAnchors)) {
+      const a = poly._edgeAnchors[key];
+      if (!a || !a.target || !objs.includes(a.target)) continue;
+      applyVertexSceneMove(poly, Number(key), fromTargetLocal(a.target, a.local));
+      any = true;
+    }
+  }
+  if (any) _canvas.requestRenderAll();
+}
+
+// After a node was dragged: re-anchor it to the nearest shape edge if released
+// close enough, otherwise detach it (leave it where dropped).
+function _reanchorNodeAfterDrag(poly, i) {
+  const targets = _canvas.getObjects().filter((o) => o._isShape && !o._isGhost && o !== poly);
+  const scene = getVertexScenePosition(poly, i);
+  const maxDist = EDGE_SNAP_PX / (_canvas.getZoom() || 1);
+  const hit = targets.length ? snapPointToShapes({ x: scene.x, y: scene.y }, targets, maxDist) : null;
+  if (!poly._edgeAnchors) poly._edgeAnchors = {};
+  if (hit) {
+    poly._edgeAnchors[i] = { target: hit.target, local: toTargetLocal(hit.target, hit.point) };
+    applyVertexSceneMove(poly, i, hit.point); // snap exactly onto the edge
+  } else if (poly._edgeAnchors[i]) {
+    delete poly._edgeAnchors[i]; // dropped in open space → detach
+  }
+  _canvas.requestRenderAll();
+}
+
+// A click (no drag) in draw mode leaves a zero-size "dot" path — e.g. the two
+// clicks of a double-click, or clicking away from a text box. Discard those
+// degenerate strokes (drawn marks/decimal points are bigger and kept).
+function _removeStrayDot(e) {
+  const p = e && e.path;
+  if (!p) return false;
+  if (Math.max(p.width || 0, p.height || 0) >= 3) return false;
+  historyPopLast();                          // drop its just-recorded add-entry
+  historySuspend(() => _canvas.remove(p));   // remove without recording
+  return true;
+}
+
 // Swap a freehand path for a recognized primitive, with a brief fade-in.
 function _onPathCreated(e) {
   if (!_shouldBeautify()) return;
@@ -68,23 +167,36 @@ function _onPathCreated(e) {
   const pts = pathToPoints(path);
   const result = recognizeStroke(pts, {
     strokeWidth: path.strokeWidth || 5,
-    color: typeof path.stroke === 'string' ? path.stroke : 'black',
+    color: getDrawColor(),
+    fill: computedShapeFill(),
+    cornerRadius: getCornerRadius(),
+    lineStyle: getLineStyle(),
   });
   if (!result) return;
 
-  // Keep the original freehand stroke as a faded "ghost" beneath the clean
-  // shape, so the difference between what was drawn and what was generated stays
-  // visible. (Tagged _isGhost; non-selectable so it doesn't block the shape.)
-  path.set({
-    selectable: false,
-    evented: false,
-    opacity: GHOST_OPACITY,
-    _isGhost: true,
-  });
-
   const { shape } = result;
   shape.set({ selectable: true, evented: true, opacity: 0.5, _isShape: true });
-  _canvas.add(shape);
+
+  // Edge snap: if an open polyline/line's start or end was drawn close to an
+  // existing shape's outline, pull that endpoint onto the edge for a clean join.
+  // An arrow-ended polyline's LAST points are its arrowhead wings, not a free
+  // endpoint — snapping those would mangle the head, so only the start snaps.
+  if (result.type === 'line' || result.type === 'polyline') {
+    _snapEndpointsToEdges(shape, result.arrowEnd ? [0] : undefined);
+  }
+
+  // Replace the freehand stroke with the clean shape. Keep the stroke's own
+  // add-entry below and push the snap on top, so it's two undo steps: first undo
+  // restores the original stroke, second undo removes it (undoes the drawing).
+  historySuspend(() => {
+    _canvas.remove(path);
+    _canvas.add(shape);
+  });
+  pushComposite((c) => historySuspend(() => {
+    c.remove(shape);
+    c.add(path); // original hand-drawn stroke reappears, in its original colour
+  }));
+
   // Brief fade-in as a "snap" cue. Guarded so any animate API mismatch still
   // leaves the shape fully opaque rather than half-faded.
   try {
@@ -117,12 +229,24 @@ export function initModes(canvas) {
   if (!canvas) return;
   _canvas = canvas;
 
+  // Clicking the already-active mode button toggles its options bar; switching
+  // modes keeps the bar open (if it was) and re-renders it for the new mode.
+  const onModeButton = (mode) => {
+    const wasOpen = isSubToolbarOpen();
+    const sameMode = _mode === mode;
+    setMode(mode);
+    if (sameMode) {
+      toggleSubToolbar(mode);
+    } else if (wasOpen) {
+      showSubToolbar(mode);
+    }
+  };
   const drawBtn = document.getElementById('mode-draw');
   const selectBtn = document.getElementById('mode-select');
   const shapesBtn = document.getElementById('mode-shapes');
-  if (drawBtn) drawBtn.addEventListener('click', () => setMode('draw'));
-  if (selectBtn) selectBtn.addEventListener('click', () => setMode('select'));
-  if (shapesBtn) shapesBtn.addEventListener('click', () => setMode('shapes'));
+  if (drawBtn) drawBtn.addEventListener('click', () => onModeButton('draw'));
+  if (selectBtn) selectBtn.addEventListener('click', () => onModeButton('select'));
+  if (shapesBtn) shapesBtn.addEventListener('click', () => onModeButton('shapes'));
 
   const smartSelect = document.getElementById('smart-shapes-select');
   if (smartSelect) {
@@ -130,7 +254,48 @@ export function initModes(canvas) {
     smartSelect.addEventListener('change', (ev) => setSmartShapes(ev.target.value));
   }
 
-  canvas.on('path:created', _onPathCreated);
+  const edgeSnapSelect = document.getElementById('edge-snap-select');
+  if (edgeSnapSelect) {
+    _edgeSnap = edgeSnapSelect.value || _edgeSnap;
+    edgeSnapSelect.addEventListener('change', (ev) => setEdgeSnap(ev.target.value));
+  }
+
+  canvas.on('path:created', (e) => { if (!_removeStrayDot(e)) _onPathCreated(e); });
+  // After an undo, re-pin anchored nodes (e.g. a restored/relocated target).
+  onAfterUndo(() => _reapplyAnchors(null));
+  // Sticky anchors: anchored polyline nodes follow their shape as it moves.
+  canvas.on('object:moving', (e) => _reapplyAnchors(e.target));
+  canvas.on('object:modified', (e) => {
+    if (_edgeSnap !== 'on') return;
+    const obj = e && e.target;
+    const corner = e && e.transform && e.transform.corner;
+    const ctrl = corner && obj && obj.controls ? obj.controls[corner] : null;
+    // A node was dragged (our polylines only have point-controls, each with a
+    // pointIndex) → re-snap to nearest edge or detach. Otherwise a shape/body
+    // moved → keep anchored nodes glued to their targets.
+    if (obj && Array.isArray(obj.points) && ctrl && Number.isInteger(ctrl.pointIndex)) {
+      _reanchorNodeAfterDrag(obj, ctrl.pointIndex);
+    } else {
+      _reapplyAnchors(null);
+    }
+  });
+
+  // Direction-aware marquee selection (CAD-style window vs. crossing):
+  //   drag downward (top→bottom) → "window": only fully-enclosed objects.
+  //   drag upward   (bottom→top) → "crossing": any object the box touches.
+  // Fabric reads canvas.selectionFullyContained when it finalizes the marquee on
+  // mouse:up, so we set it live during the drag based on the pointer direction.
+  let _marqueeStartY = null;
+  canvas.on('mouse:down', (opt) => {
+    if (_mode !== 'select') { _marqueeStartY = null; return; }
+    _marqueeStartY = canvas.getPointer(opt.e).y;
+  });
+  canvas.on('mouse:move', (opt) => {
+    // Only while an actual marquee is being dragged (not moving/resizing a shape).
+    if (_marqueeStartY === null || canvas._currentTransform || !canvas._groupSelector) return;
+    canvas.selectionFullyContained = canvas.getPointer(opt.e).y > _marqueeStartY;
+  });
+  canvas.on('mouse:up', () => { _marqueeStartY = null; });
 
   // Hold Space → temporary Select; release → restore previous mode.
   let tempPrevMode = null;
@@ -148,6 +313,14 @@ export function initModes(canvas) {
       setMode(tempPrevMode);
       tempPrevMode = null;
     }
+  });
+
+  // Delete / Backspace removes the current selection (unless typing).
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Delete' && ev.key !== 'Backspace') return;
+    if (_isTyping() || !_canvas.getActiveObject()) return;
+    ev.preventDefault();
+    deleteActiveSelection();
   });
 
   setMode('draw');

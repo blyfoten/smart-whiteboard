@@ -168,6 +168,240 @@ function countCorners(pts) {
   return count;
 }
 
+// Ramer–Douglas–Peucker, returning the kept vertex INDICES (always including the
+// endpoints). Indices let us check each resulting segment against its original
+// sub-stroke. Used to straighten a multi-segment freehand stroke.
+function rdpIndices(pts, eps) {
+  const keep = new Array(pts.length).fill(false);
+  keep[0] = true;
+  keep[pts.length - 1] = true;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [s, e] = stack.pop();
+    let maxD = 0;
+    let idx = -1;
+    for (let i = s + 1; i < e; i++) {
+      const d = pointLineDistance(pts[i], pts[s], pts[e]);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > eps && idx !== -1) {
+      keep[idx] = true;
+      stack.push([s, idx], [idx, e]);
+    }
+  }
+  const out = [];
+  for (let i = 0; i < pts.length; i++) if (keep[i]) out.push(i);
+  return out;
+}
+
+// Snap a segment to horizontal/vertical when its direction is within ~9° of an
+// axis, keeping `a` fixed and moving `b` onto the axis. Returns the new `b`.
+const ORTHO_TOL = Math.tan((9 * Math.PI) / 180);
+function snapSegment(a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (Math.abs(dy) <= Math.abs(dx) * ORTHO_TOL) return { x: b.x, y: a.y }; // horizontal
+  if (Math.abs(dx) <= Math.abs(dy) * ORTHO_TOL) return { x: a.x, y: b.y }; // vertical
+  return { x: b.x, y: b.y };
+}
+
+function snapLine(a, b) {
+  return { a: { x: a.x, y: a.y }, b: snapSegment(a, b) };
+}
+
+// Snap each segment of a polyline in turn (sequentially, so shared vertices stay
+// connected) — turns a hand-drawn right-angle into a clean one.
+function snapPolyline(v) {
+  const out = [{ x: v[0].x, y: v[0].y }];
+  for (let i = 1; i < v.length; i++) out.push(snapSegment(out[i - 1], v[i]));
+  return out;
+}
+
+// An open multi-segment stroke (an L, a staircase, a U, a zig-zag of a few
+// segments) → its corner vertices, or null. Tolerant of a wobbly/bowed segment:
+// shallow (non-corner) vertices are merged out rather than rejecting the whole
+// stroke; a result that barely bends overall collapses back to a single line.
+// Stays conservative against curves via a per-segment straightness check.
+function detectPolyline(pts, bb) {
+  const diag = Math.hypot(bb.w, bb.h);
+  const eps = Math.max(6, 0.04 * diag);
+  const idx = rdpIndices(pts, eps);
+  if (idx.length < 3) return null;
+
+  // Merge out interior vertices that aren't real corners (gentle bends from a
+  // wobbly hand or a bowed segment), keeping only sharp turns.
+  const TURN = (33 * Math.PI) / 180;
+  let changed = true;
+  while (changed && idx.length > 2) {
+    changed = false;
+    for (let k = 1; k < idx.length - 1; k++) {
+      const a = pts[idx[k - 1]];
+      const b = pts[idx[k]];
+      const c = pts[idx[k + 1]];
+      if (angleTurn(b.x - a.x, b.y - a.y, c.x - b.x, c.y - b.y) < TURN) {
+        idx.splice(k, 1);
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  // Collapsed to no real corners: a single straight-ish run → one line (if it
+  // really is line-like), else leave it as ink.
+  if (idx.length < 3) {
+    const a0 = pts[0];
+    const b0 = pts[pts.length - 1];
+    const chord = dist(a0, b0);
+    let maxDev = 0;
+    for (const p of pts) maxDev = Math.max(maxDev, pointLineDistance(p, a0, b0));
+    if (chord >= MIN_SIZE && maxDev < Math.max(20, 0.15 * chord)) {
+      const s = snapLine(a0, b0);
+      return { type: 'line', a: s.a, b: s.b };
+    }
+    return null;
+  }
+
+  if (idx.length > 12) return null; // implausibly many corners → not a clean polyline
+
+  const v = idx.map((i) => pts[i]);
+
+  // Arrowhead ending: the stroke's last 1–3 segments are short and fold back
+  // sharply against the shaft — the hand-drawn V of an arrow tip. Strip them
+  // and flag the arrow; all the guards below then judge only the shaft.
+  let arrowEnd = false;
+  {
+    const total = polylineLength(v);
+    let maxSeg = 0;
+    for (let i = 1; i < v.length; i++) maxSeg = Math.max(maxSeg, dist(v[i - 1], v[i]));
+    // A wing must be clearly shorter than the shaft's dominant segment (a
+    // zig-zag of comparable segments is NOT a head, however sharp its turns).
+    const wingMax = Math.min(0.45 * maxSeg, 0.3 * total);
+    let end = v.length - 1;
+    let stripped = 0;
+    while (end >= 2 && stripped < 3) {
+      const wingLen = dist(v[end - 1], v[end]);
+      const turn = angleTurn(
+        v[end - 1].x - v[end - 2].x, v[end - 1].y - v[end - 2].y,
+        v[end].x - v[end - 1].x, v[end].y - v[end - 1].y
+      );
+      if (wingLen < wingMax && turn > (100 * Math.PI) / 180) {
+        end--;
+        stripped++;
+      } else {
+        break;
+      }
+    }
+    if (stripped > 0) {
+      arrowEnd = true;
+      v.splice(end + 1);
+      idx.splice(end + 1);
+    }
+  }
+
+  // A stripped head can leave a plain straight shaft → an arrow-ended line.
+  if (arrowEnd && v.length === 2) {
+    if (dist(v[0], v[1]) < MIN_SIZE) return null;
+    const s = snapLine(v[0], v[1]);
+    return { type: 'line', a: s.a, b: s.b, arrowEnd: true };
+  }
+  if (v.length < 3) return null;
+
+  const minSeg = Math.max(MIN_SIZE * 0.6, 0.05 * diag);
+  for (let i = 1; i < v.length; i++) {
+    if (dist(v[i - 1], v[i]) < minSeg) return null; // reject tiny zig-zag noise
+  }
+
+  // Reject a smooth curve that survived as several corners all bending the same
+  // way (an arc RDP chopped into segments). A real open polyline has few corners
+  // or alternating ones (a staircase zig-zags); 3+ interior turns all in the same
+  // rotational direction means a curve, not a polyline. Turn signs are robust
+  // here because merging already removed the shallow (near-zero) vertices.
+  if (v.length - 2 >= 3) {
+    let sign = 0;
+    let allSame = true;
+    for (let i = 1; i < v.length - 1; i++) {
+      const ax = v[i].x - v[i - 1].x, ay = v[i].y - v[i - 1].y;
+      const bx = v[i + 1].x - v[i].x, by = v[i + 1].y - v[i].y;
+      const s = Math.sign(ax * by - ay * bx);
+      if (sign === 0) sign = s;
+      else if (s !== sign) { allSame = false; break; }
+    }
+    if (allSame) return null;
+  }
+
+  // Curve guard: each retained segment's original sub-stroke must be roughly
+  // straight. A smooth curve that RDP chopped into pieces would bow within each
+  // piece and is rejected here (stays ink).
+  for (let k = 1; k < idx.length; k++) {
+    const seg = pts.slice(idx[k - 1], idx[k] + 1);
+    const segLen = dist(pts[idx[k - 1]], pts[idx[k]]);
+    if (maxDeviationFromChord(seg, pts[idx[k - 1]], pts[idx[k]]) > 0.14 * segLen + 4) return null;
+  }
+
+  return { type: 'polyline', points: snapPolyline(v), arrowEnd };
+}
+
+// A closed stroke that isn't a rectangle or ellipse → a clean polygon (a
+// triangle, diamond, pentagon, notched/L-shaped outline …), or null. Same
+// straighten-and-merge approach as the open case, but cyclic and WITHOUT the
+// same-direction rejection (a convex polygon legitimately turns one way) — smooth
+// closed curves are kept out by the ellipse fit (tried first) and curve guard.
+function detectPolygon(pts, bb) {
+  const diag = Math.hypot(bb.w, bb.h);
+  const eps = Math.max(6, 0.04 * diag);
+  let idx = rdpIndices(pts, eps);
+  // Closed loop: the last vertex is the (near-duplicate) start — drop it.
+  if (idx.length >= 2 && dist(pts[idx[0]], pts[idx[idx.length - 1]]) < 0.25 * Math.max(bb.w, bb.h)) {
+    idx = idx.slice(0, -1);
+  }
+  if (idx.length < 3) return null;
+
+  // Merge out shallow (non-corner) vertices, cyclically.
+  const TURN = (33 * Math.PI) / 180;
+  const turnAt = (k) => {
+    const a = pts[idx[(k - 1 + idx.length) % idx.length]];
+    const b = pts[idx[k]];
+    const c = pts[idx[(k + 1) % idx.length]];
+    return angleTurn(b.x - a.x, b.y - a.y, c.x - b.x, c.y - b.y);
+  };
+  let changed = true;
+  while (changed && idx.length > 3) {
+    changed = false;
+    for (let k = 0; k < idx.length; k++) {
+      if (turnAt(k) < TURN) { idx.splice(k, 1); changed = true; break; }
+    }
+  }
+  if (idx.length < 3 || idx.length > 10) return null;
+
+  const v = idx.map((i) => pts[i]);
+  const minSeg = Math.max(MIN_SIZE * 0.6, 0.05 * diag);
+  for (let k = 0; k < v.length; k++) {
+    if (dist(v[k], v[(k + 1) % v.length]) < minSeg) return null;
+  }
+  // Curve guard: each (non-closing) segment's original sub-stroke must be ~straight.
+  for (let k = 1; k < idx.length; k++) {
+    const seg = pts.slice(idx[k - 1], idx[k] + 1);
+    const segLen = dist(pts[idx[k - 1]], pts[idx[k]]);
+    if (maxDeviationFromChord(seg, pts[idx[k - 1]], pts[idx[k]]) > 0.14 * segLen + 4) return null;
+  }
+  return { type: 'polygon', points: v.map((p) => ({ x: p.x, y: p.y })) };
+}
+
+// Fraction of points that stray well into the interior, away from the bounding
+// box outline. A real rectangle hugs its bbox (≈0); a heart, triangle or
+// staircase dips inside, so a sizable fraction strays. Guards rect detection
+// against any closed blob that merely happens to have 3–6 sharp corners.
+function interiorStrayFraction(pts, bb) {
+  const half = Math.max(1, Math.min(bb.w, bb.h) / 2);
+  const thresh = 0.3 * half;
+  let stray = 0;
+  for (const p of pts) {
+    const edgeDist = Math.min(p.x - bb.minX, bb.maxX - p.x, p.y - bb.minY, bb.maxY - p.y);
+    if (edgeDist > thresh) stray++;
+  }
+  return stray / pts.length;
+}
+
 // Arrow: a mostly-straight shaft from start to the farthest point, followed by
 // a short hook (the arrowhead) that folds back toward the start.
 function detectArrow(pts) {
@@ -200,10 +434,12 @@ function detectArrow(pts) {
 }
 
 // classifyStroke(points) -> descriptor | null
-//   { type: 'line',    a, b }
-//   { type: 'arrow',   a, b }
+//   { type: 'line',     a, b }
+//   { type: 'polyline', points: [{x,y}, ...] }   (open)
+//   { type: 'polygon',  points: [{x,y}, ...] }   (closed)
+//   { type: 'arrow',    a, b }
 //   { type: 'circle' | 'ellipse', cx, cy, rx, ry }
-//   { type: 'rect',    x, y, w, h }
+//   { type: 'rect',     x, y, w, h }
 export function classifyStroke(pts) {
   if (!pts || pts.length < 3) return null;
 
@@ -219,15 +455,23 @@ export function classifyStroke(pts) {
     // and we fall through; an arrow's hook would otherwise read as "straight".
     const arrow = detectArrow(pts);
     if (arrow) return { type: 'arrow', a: arrow.a, b: arrow.b };
-    if (isStraight(pts)) return { type: 'line', a: { ...a }, b: { ...b } };
+    if (isStraight(pts)) {
+      const s = snapLine(a, b);
+      return { type: 'line', a: s.a, b: s.b };
+    }
+    // Multi-segment straightening: an L / staircase / few-segment zig-zag.
+    const poly = detectPolyline(pts, bb);
+    if (poly) return poly;
     return null;
   }
 
   // Corner count is the robust rect-vs-ellipse signal: a rectangle has ~4 sharp
   // corners, an ellipse none — far more tolerant of shaky sides than an
-  // edge-distance or area test, which a single noisy spike throws off.
+  // edge-distance or area test, which a single noisy spike throws off. But it
+  // also fires on hearts/triangles/staircases, so additionally require the
+  // stroke to hug its bounding box (few interior strays).
   const corners = countCorners(pts);
-  if (corners >= 3 && corners <= 6) {
+  if (corners >= 3 && corners <= 6 && interiorStrayFraction(pts, bb) < 0.12) {
     return { type: 'rect', x: bb.minX, y: bb.minY, w: bb.w, h: bb.h };
   }
 
@@ -238,6 +482,11 @@ export function classifyStroke(pts) {
       cx: ell.cx, cy: ell.cy, rx: ell.rx, ry: ell.ry,
     };
   }
+
+  // Not a rectangle or ellipse — try a clean closed polygon (triangle, diamond,
+  // notched outline, …) before giving up and leaving it as ink.
+  const polygon = detectPolygon(pts, bb);
+  if (polygon) return polygon;
 
   return null;
 }

@@ -4,8 +4,150 @@
 // several apply), while a plain expression just offers Plot and Copy.
 
 import { getCanvas } from './canvas.js';
-import { drawGraph, solveToBoard } from './api.js';
+import { drawGraph, solveToBoard, parseTypedEquation, replotGraph } from './api.js';
 import { getCurrentModel } from './ui.js';
+import { suspend as historySuspend, pushComposite } from './history.js';
+import { dashArrayFor } from './draw-settings.js';
+
+// Objects with an outline that a line style applies to.
+const STROKED_TYPES = ['line', 'polyline', 'polygon', 'rect', 'ellipse', 'circle', 'path'];
+
+function strokedObjects(canvas) {
+  return canvas.getActiveObjects().filter((o) => STROKED_TYPES.includes(o.type) && o.stroke);
+}
+
+// Reorder the selected object(s) in the stacking order.
+function reorderSelection(mode) {
+  const canvas = getCanvas();
+  if (!canvas) return;
+  const objs = canvas.getActiveObjects();
+  objs.forEach((o) => {
+    if (mode === 'front') canvas.bringObjectToFront(o);
+    else if (mode === 'back') canvas.sendObjectToBack(o);
+    else if (mode === 'forward') canvas.bringObjectForward(o);
+    else canvas.sendObjectBackwards(o);
+  });
+  canvas.requestRenderAll();
+  if (objs[0]) canvas.fire('object:modified', { target: objs[0] }); // autosave
+}
+
+// Apply a line style to every stroked object in the selection (one undo step).
+function applyLineStyle(style) {
+  const canvas = getCanvas();
+  if (!canvas) return;
+  const objs = strokedObjects(canvas);
+  if (!objs.length) return;
+  const before = objs.map((o) => ({ o, dash: o.strokeDashArray || null }));
+  objs.forEach((o) => o.set({ strokeDashArray: dashArrayFor(style, o.strokeWidth || 5), dirty: true }));
+  canvas.requestRenderAll();
+  canvas.fire('object:modified', { target: objs[0] }); // autosave
+  pushComposite(() => {
+    before.forEach(({ o, dash }) => o.set({ strokeDashArray: dash, dirty: true }));
+    canvas.requestRenderAll();
+  });
+}
+
+const TEXT_TYPES = ['i-text', 'text', 'textbox'];
+
+function isTextObject(o) {
+  return !!o && TEXT_TYPES.includes(o.type);
+}
+
+// Scale a text object's font size by `f`, including any per-character superscript
+// styling so exponents grow/shrink proportionally.
+function applyFontScale(obj, f) {
+  obj.set({ fontSize: obj.fontSize * f });
+  if (obj.styles) {
+    Object.values(obj.styles).forEach((line) =>
+      Object.values(line).forEach((ch) => {
+        if (ch.fontSize) ch.fontSize *= f;
+        if (ch.deltaY) ch.deltaY *= f;
+      })
+    );
+  }
+  if (obj.initDimensions) obj.initDimensions();
+  obj.setCoords();
+}
+
+function cloneStyles(o) {
+  return o.styles ? JSON.parse(JSON.stringify(o.styles)) : null;
+}
+
+// Resize the selected text by a factor, undoable, and re-fit the menu.
+function changeFontSize(factor) {
+  const canvas = getCanvas();
+  if (!canvas || !isTextObject(target)) return;
+  const beforeSize = target.fontSize;
+  const beforeStyles = cloneStyles(target);
+  const newSize = Math.max(8, Math.min(400, beforeSize * factor));
+  if (newSize === beforeSize) return;
+  applyFontScale(target, newSize / beforeSize);
+  canvas.requestRenderAll();
+  positionMenu();
+  canvas.fire('object:modified', { target }); // trigger autosave
+  pushComposite(() => {
+    target.set({ fontSize: beforeSize });
+    if (beforeStyles) target.styles = JSON.parse(JSON.stringify(beforeStyles));
+    if (target.initDimensions) target.initDimensions();
+    target.setCoords();
+    canvas.requestRenderAll();
+  });
+}
+
+// Scale a graph's axis-label font (re-renders the chart; the plot footprint and
+// line thickness stay the same). Drag the handles to resize the whole graph.
+function changeGraphFont(factor) {
+  if (!target || !target._plot) return;
+  const cur = Number.isFinite(target._plot.fontScale) ? target._plot.fontScale : 1;
+  const next = Math.max(0.5, Math.min(3, cur * factor));
+  replotGraph(target, { fontScale: next });
+}
+
+function numInput(value, title) {
+  const i = document.createElement('input');
+  i.type = 'number';
+  i.className = 'em-num';
+  i.title = title;
+  if (value != null && Number.isFinite(value)) i.value = value;
+  return i;
+}
+
+// x/y limit fields for a selected graph; changing any re-plots it.
+function graphLimits(graph) {
+  const p = graph._plot || {};
+  const wrap = document.createElement('span');
+  wrap.className = 'em-limits';
+  const xmin = numInput(p.xmin, 'x min');
+  const xmax = numInput(p.xmax, 'x max');
+  const ymin = numInput(p.ymin, 'y min (blank = auto)');
+  const ymax = numInput(p.ymax, 'y max (blank = auto)');
+  const val = (el, dflt) => (el.value === '' ? dflt : Number(el.value));
+  const apply = () => {
+    replotGraph(graph, {
+      xmin: val(xmin, p.xmin),
+      xmax: val(xmax, p.xmax),
+      ymin: ymin.value === '' ? null : Number(ymin.value),
+      ymax: ymax.value === '' ? null : Number(ymax.value),
+    });
+  };
+  [xmin, xmax, ymin, ymax].forEach((el) => el.addEventListener('change', apply));
+  const label = (t) => { const s = document.createElement('span'); s.className = 'em-label'; s.textContent = t; return s; };
+  wrap.append(label('x'), xmin, xmax, label('y'), ymin, ymax);
+  return wrap;
+}
+
+// Delete the current selection (one or many) as a single undo step.
+export function deleteActiveSelection() {
+  const canvas = getCanvas();
+  if (!canvas) return;
+  const objs = canvas.getActiveObjects();
+  if (!objs.length) return;
+  canvas.discardActiveObject();
+  historySuspend(() => objs.forEach((o) => canvas.remove(o)));
+  pushComposite((c) => historySuspend(() => objs.forEach((o) => c.add(o))));
+  hideEquationMenu();
+  canvas.requestRenderAll();
+}
 
 let menuEl = null;
 let target = null;
@@ -97,6 +239,37 @@ export function hideEquationMenu() {
   }
 }
 
+// The equation data behind a selected object: stored on extracted/typed
+// equations, or parsed live from a text object that looks like an equation.
+function equationDataFor(obj) {
+  if (!obj) return null;
+  if (obj._equationData) return obj._equationData;
+  if ((obj.type === 'i-text' || obj.type === 'text') &&
+      typeof obj.text === 'string' && obj.text.includes('=')) {
+    return parseTypedEquation(obj.text);
+  }
+  return null;
+}
+
+// Show the action menu for the current selection: equation actions for an
+// equation, otherwise just a delete affordance. Hidden when nothing is selected.
+function onSelectionChanged() {
+  const canvas = getCanvas();
+  if (!canvas) return;
+  const active = canvas.getActiveObject();
+  if (!active) return; // selection:cleared handler hides the menu
+  const data = active.type === 'activeselection' ? null : equationDataFor(active);
+  if (data) window.extractedEquationData = data; // Plot/Solve/Steps act on this one
+  showEquationMenu(active, data);
+}
+
+// Wire the menu to selection: selecting an equation (in Select mode) shows it.
+export function initEquationSelection(canvas) {
+  if (!canvas) return;
+  canvas.on('selection:created', onSelectionChanged);
+  canvas.on('selection:updated', onSelectionChanged);
+}
+
 // showEquationMenu(targetObj, data): pop the action menu next to targetObj.
 export function showEquationMenu(targetObj, data) {
   hideEquationMenu();
@@ -104,7 +277,10 @@ export function showEquationMenu(targetObj, data) {
   if (!canvas || !targetObj) return;
   target = targetObj;
 
-  const info = analyzeEquation(data);
+  // data may be null for a non-equation selection — then it's just a delete menu.
+  const info = data
+    ? analyzeEquation(data)
+    : { expr: '', indepVar: 'x', dep: '', degree: 0, isFunction: false };
   const methods = info.isFunction ? methodsFor(info.degree, info.indepVar) : [];
 
   menuEl = document.createElement('div');
@@ -139,10 +315,12 @@ export function showEquationMenu(targetObj, data) {
     );
   });
 
-  const label = document.createElement('span');
-  label.className = 'em-label';
-  label.textContent = info.isFunction ? `${info.dep} = ${info.expr}` : 'equation';
-  row.appendChild(label);
+  if (info.isFunction) {
+    const label = document.createElement('span');
+    label.className = 'em-label';
+    label.textContent = `${info.dep} = ${info.expr}`;
+    row.appendChild(label);
+  }
 
   if (info.isFunction && data.ranges && Object.keys(data.ranges).length) {
     row.appendChild(makeButton('📈 Plot', 'Plot this function', () => drawGraph()));
@@ -175,16 +353,39 @@ export function showEquationMenu(targetObj, data) {
     }
   }
 
-  row.appendChild(
-    makeButton(
-      '⧉ Copy',
-      'Copy equation text',
-      () => {
+  if (isTextObject(target)) {
+    row.appendChild(makeButton('A−', 'Smaller text', () => changeFontSize(1 / 1.15)));
+    row.appendChild(makeButton('A+', 'Larger text', () => changeFontSize(1.15)));
+  }
+
+  if (target && target._isGraph) {
+    row.appendChild(makeButton('A−', 'Smaller axis labels', () => changeGraphFont(1 / 1.15)));
+    row.appendChild(makeButton('A+', 'Larger axis labels', () => changeGraphFont(1.15)));
+    if (target._plot) row.appendChild(graphLimits(target));
+  }
+
+  if (info.isFunction || (target && typeof target.text === 'string' && target.text)) {
+    row.appendChild(
+      makeButton('⧉ Copy', 'Copy text', () => {
         const text = target && target.text ? target.text : `${info.dep} = ${info.expr}`;
         if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
-      }
-    )
-  );
+      })
+    );
+  }
+
+  // Stacking order — useful whenever shapes overlap.
+  row.appendChild(makeButton('⬆', 'Bring to front', () => reorderSelection('front')));
+  row.appendChild(makeButton('⬇', 'Send to back', () => reorderSelection('back')));
+
+  // Line style — shown when the selection contains outlined shapes.
+  if (strokedObjects(canvas).length) {
+    row.appendChild(makeButton('—', 'Solid outline', () => applyLineStyle('solid')));
+    row.appendChild(makeButton('– –', 'Dashed outline', () => applyLineStyle('dashed')));
+    row.appendChild(makeButton('· ·', 'Dotted outline', () => applyLineStyle('dotted')));
+  }
+
+  const del = makeButton('🗑', 'Delete selection (Del)', deleteActiveSelection, 'em-del');
+  row.appendChild(del);
 
   const close = makeButton('✕', 'Dismiss', hideEquationMenu, 'em-close');
   row.appendChild(close);

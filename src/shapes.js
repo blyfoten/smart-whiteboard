@@ -3,10 +3,46 @@
 // Pure geometry/classification lives in shape-classifier.js (no Fabric, unit
 // tested). This module owns only the Fabric object construction.
 
-import { Line, Rect, Ellipse, Path } from 'fabric';
+import { Rect, Ellipse, Path, Polyline, Polygon } from 'fabric';
 import { classifyStroke, pathToPoints } from './shape-classifier.js';
+import { enablePointEditing } from './node-edit.js';
+import { dashArrayFor } from './draw-settings.js';
 
 export { pathToPoints };
+
+// A straight or multi-segment stroke becomes a Polyline/Polygon with draggable
+// vertices. `closed` true → a Polygon (closed loop), else an open Polyline.
+export function buildPoly(points, opts, closed) {
+  const Ctor = closed ? Polygon : Polyline;
+  const poly = new Ctor(points, {
+    stroke: opts.color,
+    strokeWidth: opts.strokeWidth,
+    fill: opts.fill || '',
+    strokeDashArray: opts.dashArray || null,
+    strokeLineJoin: 'round',
+    strokeLineCap: 'round',
+    objectCaching: false,
+  });
+  enablePointEditing(poly);
+  return poly;
+}
+
+// Append the two wing points of an arrowhead to an open polyline's point list:
+// [..., tip] -> [..., tip, w1, tip, w2]. The polyline then renders shaft + V
+// head as one editable object (the wings get node handles too).
+export function withArrowhead(points) {
+  const n = points.length;
+  if (n < 2) return points;
+  const tip = points[n - 1];
+  const prev = points[n - 2];
+  const segLen = Math.hypot(tip.x - prev.x, tip.y - prev.y);
+  const ang = Math.atan2(tip.y - prev.y, tip.x - prev.x);
+  const len = Math.max(10, Math.min(26, 0.35 * segLen));
+  const th = (28 * Math.PI) / 180;
+  const w1 = { x: tip.x - len * Math.cos(ang - th), y: tip.y - len * Math.sin(ang - th) };
+  const w2 = { x: tip.x - len * Math.cos(ang + th), y: tip.y - len * Math.sin(ang + th) };
+  return [...points, w1, { x: tip.x, y: tip.y }, w2];
+}
 
 function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -22,26 +58,40 @@ function buildArrowPath(a, b, opts) {
   const d =
     `M ${a.x} ${a.y} L ${b.x} ${b.y} ` +
     `L ${h1.x} ${h1.y} M ${b.x} ${b.y} L ${h2.x} ${h2.y}`;
-  return new Path(d, { stroke: opts.color, strokeWidth: opts.strokeWidth, fill: '' });
+  return new Path(d, { stroke: opts.color, strokeWidth: opts.strokeWidth, fill: '', strokeDashArray: opts.dashArray || null });
 }
 
-// recognizeStroke(points, { strokeWidth, color }) -> { shape, type } | null
+// recognizeStroke(points, { strokeWidth, color, fill, cornerRadius }) -> { shape, type } | null
 export function recognizeStroke(pts, opts = {}) {
   const desc = classifyStroke(pts);
   if (!desc) return null;
 
   const strokeWidth = opts.strokeWidth || 5;
   const color = opts.color || 'black';
-  const common = { stroke: color, strokeWidth, fill: 'transparent' };
+  const fill = opts.fill || '';              // '' = transparent
+  const radius = Math.max(0, opts.cornerRadius || 0);
+  const dashArray = dashArrayFor(opts.lineStyle || 'solid', strokeWidth);
+  const common = { stroke: color, strokeWidth, fill, strokeDashArray: dashArray };
 
   switch (desc.type) {
-    case 'line':
+    case 'line': {
+      // Lines/arrows are never filled. An arrowEnd (hand-drawn V at the tip)
+      // becomes wing points appended to the editable polyline.
+      let pts2 = [{ x: desc.a.x, y: desc.a.y }, { x: desc.b.x, y: desc.b.y }];
+      if (desc.arrowEnd) pts2 = withArrowhead(pts2);
       return {
-        type: 'line',
-        shape: new Line([desc.a.x, desc.a.y, desc.b.x, desc.b.y], { stroke: color, strokeWidth }),
+        type: desc.arrowEnd ? 'arrow' : 'line',
+        shape: buildPoly(pts2, { color, strokeWidth, fill: '', dashArray }, false),
       };
+    }
+    case 'polyline': {
+      const pts2 = desc.arrowEnd ? withArrowhead(desc.points) : desc.points;
+      return { type: 'polyline', arrowEnd: !!desc.arrowEnd, shape: buildPoly(pts2, { color, strokeWidth, fill: '', dashArray }, false) };
+    }
+    case 'polygon':
+      return { type: 'polygon', shape: buildPoly(desc.points, { color, strokeWidth, fill, dashArray }, true) };
     case 'arrow':
-      return { type: 'arrow', shape: buildArrowPath(desc.a, desc.b, { color, strokeWidth }) };
+      return { type: 'arrow', shape: buildArrowPath(desc.a, desc.b, { color, strokeWidth, dashArray }) };
     case 'circle':
     case 'ellipse':
       return {
@@ -57,7 +107,7 @@ export function recognizeStroke(pts, opts = {}) {
     case 'rect':
       return {
         type: 'rect',
-        shape: new Rect({ left: desc.x, top: desc.y, width: desc.w, height: desc.h, ...common }),
+        shape: new Rect({ left: desc.x, top: desc.y, width: desc.w, height: desc.h, rx: radius, ry: radius, ...common }),
       };
     default:
       return null;

@@ -1,11 +1,19 @@
 // src/index.js — thin orchestrator
 
-import { getCanvas, resizeCanvas, addReadyIndicator } from './canvas.js';
+import { getCanvas, resizeCanvas } from './canvas.js';
 import { initializeSpeechRecognition } from './speech.js';
 import { initializeModelSelectionUI, setupCanvasEventListeners, initializeEventListeners } from './ui.js';
 import { initModes } from './modes.js';
 import { initOutputPanel } from './output.js';
 import { initVoice } from './voice.js';
+import { initEquationSelection } from './equation-menu.js';
+import { initGraphResize } from './api.js';
+import { initHistory } from './history.js';
+import { initStatePersistence } from './state.js';
+import { initDrawSettings } from './draw-settings.js';
+import { initMoveSnap } from './snap-move.js';
+import { initBoards } from './boards.js';
+import { initBoardsPanel } from './boards-panel.js';
 import { solveEquation } from './api.js';
 
 function handleCommand(command) {
@@ -23,14 +31,21 @@ function handleCommand(command) {
 document.addEventListener('DOMContentLoaded', () => {
   const status = document.getElementById('status');
   try {
+    // Restore saved preferences onto the controls before any module reads them.
+    initStatePersistence();
+
     const canvas = getCanvas();
 
     if (canvas) {
       resizeCanvas(canvas);
       window.addEventListener('resize', () => resizeCanvas(canvas));
-      addReadyIndicator(canvas);
+      initHistory(canvas);
       setupCanvasEventListeners();
       initModes(canvas);
+      initDrawSettings(); // restore pen/shape colour, fill, corner radius
+      initMoveSnap(canvas); // align-to-objects snapping while moving (toggleable)
+      initGraphResize(canvas); // re-render graphs crisply when resized
+      initEquationSelection(canvas); // selecting an equation shows the action menu
 
       // Web fonts load async and Fabric renders text to the canvas, so re-render
       // once Caveat is available (otherwise the first text uses a fallback font).
@@ -48,6 +63,10 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeEventListeners();
     initOutputPanel();
     initVoice();
+
+    // Boards panel + autosave: render the list, then load the active board.
+    initBoardsPanel();
+    initBoards();
 
     // Expose globals for HTML inline usage
     window.getCanvas = getCanvas;

@@ -148,7 +148,9 @@ function stopPlayback() {
 
 // ---- video frame capture ----------------------------------------------------
 
-function captureFrameBase64() {
+// Exported for the ⚙ Developer "Save AI camera frame" button — downloads exactly
+// what the assistant sees (board + coordinate grid) for placement debugging.
+export function captureFrameBase64() {
   const canvas = getCanvas();
   if (!canvas || !canvas.lowerCanvasEl) return null;
   const srcEl = canvas.lowerCanvasEl;
@@ -171,20 +173,40 @@ function captureFrameBase64() {
   ctx.lineWidth = 1;
   ctx.font = 'bold 13px sans-serif';
   ctx.textBaseline = 'top';
+  // Thin SOLID lines at the 5s: positions between the numbered lines are where
+  // the model misreads (calibration showed "15" snapping to "20" — it quantizes
+  // to the nearest visible line, and dotted/low-alpha lines vanish when the
+  // frame is downscaled on the model side). Solid and clearly visible, but
+  // thinner-looking than the numbered 10s.
+  ctx.strokeStyle = 'rgba(0,120,255,0.2)';
+  for (let p = 5; p < 100; p += 10) {
+    const x = (p / 100) * w;
+    const y = (p / 100) * h;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
   for (let p = 0; p <= 100; p += 10) {
     const x = (p / 100) * w;
     const y = (p / 100) * h;
-    ctx.strokeStyle = p % 50 === 0 ? 'rgba(0,120,255,0.45)' : 'rgba(0,120,255,0.22)';
+    ctx.strokeStyle = p % 50 === 0 ? 'rgba(0,120,255,0.5)' : 'rgba(0,120,255,0.32)';
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     if (p > 0 && p < 100) {
-      // White halo + blue text so labels stay readable over any content.
+      // Labels on ALL four edges (x along top+bottom, y along left+right) so the
+      // model never has to trace a gridline far from a number — reading accuracy
+      // degrades with distance to the nearest label. White halo + blue text.
+      const label = String(p);
+      const lw = ctx.measureText(label).width;
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.fillText(String(p), x + 2, 1);
-      ctx.fillText(String(p), 2, y + 1);
+      ctx.fillText(label, x + 2, 1);
+      ctx.fillText(label, x + 2, h - 14);
+      ctx.fillText(label, 2, y + 1);
+      ctx.fillText(label, w - lw - 2, y + 1);
       ctx.fillStyle = 'rgba(0,80,200,0.95)';
-      ctx.fillText(String(p), x + 1, 0);
-      ctx.fillText(String(p), 1, y);
+      ctx.fillText(label, x + 1, 0);
+      ctx.fillText(label, x + 1, h - 15);
+      ctx.fillText(label, 1, y);
+      ctx.fillText(label, w - lw - 3, y);
     }
   }
   ctx.restore();
@@ -253,6 +275,22 @@ async function start() {
     switch (msg.type) {
       case 'ready':
         setStatus('🎤 Voice: listening — speak now');
+        // A stored calibration (from calibrate_check) primes the new session so
+        // the assistant's eye-based aim is corrected without re-calibrating.
+        try {
+          const cal = JSON.parse(localStorage.getItem('sw_voicecal') || 'null');
+          if (cal && cal.corrText && ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({
+              type: 'text',
+              data:
+                'SYSTEM NOTE (silent context — not the user speaking, do not mention it): a stored ' +
+                'calibration exists for this board. Whenever the coordinates you pass to a drawing ' +
+                'tool come from READING the video frame, pass fromVideo=true and they are corrected ' +
+                'automatically — never do correction math yourself, and never set fromVideo for ' +
+                'coordinates from get_objects or tool results (those are exact).',
+            }));
+          }
+        } catch (e) { /* ignore bad stored value */ }
         if (!hintShown) {
           hintShown = true;
           appendToOutput(

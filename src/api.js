@@ -1,11 +1,13 @@
 // src/api.js — fetch calls to backend (solve, extract, graph)
 
-import { getCanvas, getCanvasBoundingBox, cropCanvasToBoundingBox } from './canvas.js';
+import { getCanvas, cropObjects } from './canvas.js';
 import { IText, Textbox } from 'fabric';
 import { getCurrentModel } from './ui.js';
 import { renderGraph } from './graph.js';
 import { appendToOutput } from './output.js';
 import { showEquationMenu, hideEquationMenu } from './equation-menu.js';
+import { suspend as historySuspend, pushComposite } from './history.js';
+import { getDrawColor } from './draw-settings.js';
 
 function appendOutput(html, isError) {
   appendToOutput(html, isError);
@@ -137,7 +139,7 @@ function makeBoardBlock(canvas, anchor, initial) {
     width: Math.max(320, (anchor.width || 300) * scaleX),
     fontSize,
     fontFamily: 'Caveat, cursive',
-    fill: '#1e40af',
+    fill: getDrawColor(),
     selectable: true,
     evented: true,
     editable: false,
@@ -171,7 +173,7 @@ export async function solveToBoard(instruction, model, anchor, heading) {
     const text = ok ? cleanForBoard(data.result) : `Error: ${data.message || 'solve failed'}`;
 
     if (block) {
-      block.set({ text, fill: ok ? '#1e40af' : '#b91c1c' });
+      block.set({ text, fill: ok ? getDrawColor() : '#b91c1c' });
       block.initDimensions();
       block.setCoords();
       canvas.requestRenderAll();
@@ -232,18 +234,91 @@ export async function extractEquation() {
 
   hideEquationMenu();
 
-  const boundingBox = getCanvasBoundingBox(canvas);
-  const croppedDataURL = await cropCanvasToBoundingBox(canvas);
-
-  if (!croppedDataURL || !boundingBox) {
-    alert('No objects found on the canvas to extract equation from.');
+  // Plain freehand ink only (Fabric Paths), NOT smart shapes/graphs/extracted
+  // text — so we read & replace the equation, not the whole drawing.
+  const inkObjects = canvas
+    .getObjects()
+    .filter((o) => o.type === 'path' && !o._isShape && !o._isGhost);
+  if (!inkObjects.length) {
+    alert('No handwriting found to analyze.');
     return;
   }
+  return runExtraction(canvas, inkObjects, model);
+}
 
+// Insert explicit multiplication so a typed expression parses in math.js:
+// 2x → 2*x, 2(x+1) → 2*(x+1), )( → )*(. Leaves function calls (sin(x)) intact.
+function insertImplicitMultiplication(expr) {
+  return String(expr)
+    .replace(/(\d)\s*([a-zA-Z(])/g, '$1*$2')
+    .replace(/(\))\s*([a-zA-Z0-9(])/g, '$1*$2');
+}
+
+const KNOWN_FNS = ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'log', 'ln', 'exp', 'sqrt', 'abs', 'pi', 'e'];
+
+// Parse a typed equation ("y = 2x + 3") into the same shape the vision extractor
+// returns, so keyboard-entered equations can be plotted/solved. null if it isn't
+// an equation.
+export function parseTypedEquation(text) {
+  if (!text) return null;
+  const s = String(text).trim().replace(/\s+/g, '');
+  if (!s.includes('=')) return null;
+  const [lhs, rhs] = s.split('=');
+  if (!rhs) return null;
+  const dependentVariable = /^[a-zA-Z]\w*$/.test(lhs) ? lhs : 'y';
+  const expression = insertImplicitMultiplication(rhs);
+  const vars = new Set(
+    (expression.match(/[a-zA-Z]+/g) || []).filter((v) => !KNOWN_FNS.includes(v.toLowerCase()))
+  );
+  vars.delete(dependentVariable);
+  const indep = [...vars][0] || 'x';
+  return {
+    equation: expression,
+    dependentVariable,
+    scope: { [indep]: 0 },
+    ranges: { [indep]: [-10, 10] },
+  };
+}
+
+// Treat a typed text object as an equation: parse it and open the same
+// content-aware menu (Plot / Solve / Steps) used for handwriting.
+export function analyzeText(textObj) {
+  const canvas = getCanvas();
+  if (!canvas || !textObj) return null;
+  const parsed = parseTypedEquation(textObj.text);
+  if (!parsed) {
+    appendOutput('<b>Not an equation</b> — type something like <code>y = 2x + 3</code>.', true);
+    return null;
+  }
+  textObj._isExtracted = true;
+  textObj._equationData = parsed;
+  window.extractedEquationData = parsed;
+  appendOutput(`<b>Equation:</b> ${parsed.dependentVariable} = ${parsed.equation}`);
+  canvas.setActiveObject(textObj);
+  canvas.requestRenderAll();
+  showEquationMenu(textObj, parsed);
+  return parsed;
+}
+
+// Analyze just the ink within a user-selected region (lasso/marquee), ignoring
+// the rest of a cluttered board.
+export async function analyzeRegionInk(inkObjects) {
+  const canvas = getCanvas();
+  if (!canvas || !inkObjects || !inkObjects.length) return null;
+  hideEquationMenu();
+  return runExtraction(canvas, inkObjects, getCurrentModel());
+}
+
+// Crop the given ink, send it to the vision model, then render the recognized
+// equation as clean text in the ink's place (one undo step) and open the menu.
+async function runExtraction(canvas, inkObjects, model) {
+  const croppedDataURL = await cropObjects(canvas, inkObjects);
+  if (!croppedDataURL) {
+    alert('Nothing to analyze.');
+    return null;
+  }
   try {
-    appendOutput(`<b>Extracting equation from canvas</b><br><i>Using model: ${model}</i><br><i>Processing...</i>`);
-
-    // Unified endpoint; map the UI model to a vision provider (math/gpt → openai).
+    appendOutput(`<b>Analyzing handwriting</b><br><i>Using model: ${model}</i><br><i>Processing...</i>`);
     const provider = { gemini: 'gemini', claude: 'claude' }[model] || 'openai';
 
     const response = await fetch('/extract', {
@@ -252,69 +327,63 @@ export async function extractEquation() {
       body: JSON.stringify({ image: croppedDataURL, provider }),
     });
     const data = await response.json();
-
-    if (data.success) {
-      const { equation, dependentVariable, scope, ranges } = data;
-
-      let outputHtml = `<b>Extracted Equation:</b> ${dependentVariable} = ${equation}<br>`;
-      outputHtml += `<b>Variables:</b> ${Object.keys(scope).join(', ')}<br>`;
-      outputHtml += '<b>Ranges:</b><br>';
-      for (const [variable, range] of Object.entries(ranges)) {
-        outputHtml += `${variable}: [${range[0]}, ${range[1]}]<br>`;
-      }
-      appendOutput(outputHtml);
-
-      // The handwriting we extracted from = everything except graphs and any
-      // earlier extracted equation. We replace it in place with clean text.
-      const inkObjects = canvas
-        .getObjects()
-        .filter((o) => !o._isGraph && !o._isExtracted);
-      const inkBox = boundingBoxOf(inkObjects) || boundingBox;
-      const boxWidth = inkBox.maxX - inkBox.minX;
-      const boxHeight = inkBox.maxY - inkBox.minY;
-
-      // Start from the box height, then shrink so the plain-text equation (which
-      // is wider than handwriting — x^2 etc.) fits the original box width.
-      const { text: displayText, ranges: supRanges } = parseSuperscripts(
-        `${dependentVariable} = ${formatEquationForDisplay(equation)}`
-      );
-      let fontSize = Math.max(12, Math.round(boxHeight * 0.9));
-      const eqText = new IText(displayText, {
-        left: inkBox.minX,
-        top: inkBox.minY,
-        fill: 'green',
-        fontSize,
-        fontFamily: 'Caveat, cursive',
-        selectable: true,
-        evented: true,
-      });
-      applySuperscript(eqText, supRanges, fontSize);
-      if (eqText.width > boxWidth && eqText.width > 0) {
-        fontSize = Math.max(12, Math.floor(fontSize * (boxWidth / eqText.width)));
-        eqText.set({ fontSize });
-        applySuperscript(eqText, supRanges, fontSize);
-      }
-      // Vertically center the (now shorter) text within the original box.
-      eqText.set({ top: inkBox.minY + Math.max(0, (boxHeight - eqText.height) / 2) });
-      eqText._isExtracted = true;
-
-      // Replace the handwriting in place, stashing it for a one-press Undo.
-      eqText._replacedInk = inkObjects;
-      inkObjects.forEach((o) => canvas.remove(o));
-      canvas.add(eqText);
-
-      window.extractedEquationData = { equation, dependentVariable, scope, ranges };
-
-      // Leave the result selected and pop a content-aware action menu next to it
-      // (Plot / Solve / Steps), Word-style — instead of auto-plotting.
-      canvas.setActiveObject(eqText);
-      canvas.requestRenderAll();
-      showEquationMenu(eqText, window.extractedEquationData);
-      return window.extractedEquationData;
-    } else {
+    if (!data.success) {
       appendOutput(`<b>Error extracting equation:</b><br>${data.message || 'Unknown error'}`, true);
       return null;
     }
+
+    const { equation, dependentVariable, scope, ranges } = data;
+    let outputHtml = `<b>Extracted Equation:</b> ${dependentVariable} = ${equation}<br>`;
+    outputHtml += `<b>Variables:</b> ${Object.keys(scope).join(', ')}<br>`;
+    outputHtml += '<b>Ranges:</b><br>';
+    for (const [variable, range] of Object.entries(ranges)) {
+      outputHtml += `${variable}: [${range[0]}, ${range[1]}]<br>`;
+    }
+    appendOutput(outputHtml);
+
+    const inkBox = boundingBoxOf(inkObjects);
+    const boxWidth = inkBox.maxX - inkBox.minX;
+    const boxHeight = inkBox.maxY - inkBox.minY;
+
+    // Size from the box height, then shrink so the plain-text equation fits width.
+    const { text: displayText, ranges: supRanges } = parseSuperscripts(
+      `${dependentVariable} = ${formatEquationForDisplay(equation)}`
+    );
+    let fontSize = Math.max(12, Math.round(boxHeight * 0.9));
+    const eqText = new IText(displayText, {
+      left: inkBox.minX,
+      top: inkBox.minY,
+      fill: getDrawColor(),
+      fontSize,
+      fontFamily: 'Caveat, cursive',
+      selectable: true,
+      evented: true,
+    });
+    applySuperscript(eqText, supRanges, fontSize);
+    if (eqText.width > boxWidth && eqText.width > 0) {
+      fontSize = Math.max(12, Math.floor(fontSize * (boxWidth / eqText.width)));
+      eqText.set({ fontSize });
+      applySuperscript(eqText, supRanges, fontSize);
+    }
+    eqText.set({ top: inkBox.minY + Math.max(0, (boxHeight - eqText.height) / 2) });
+    eqText._isExtracted = true;
+    eqText._equationData = { equation, dependentVariable, scope, ranges };
+
+    // Replace the handwriting in place as ONE undo step that restores the ink.
+    historySuspend(() => {
+      inkObjects.forEach((o) => canvas.remove(o));
+      canvas.add(eqText);
+    });
+    pushComposite((c) => historySuspend(() => {
+      c.remove(eqText);
+      inkObjects.forEach((o) => c.add(o));
+    }));
+
+    window.extractedEquationData = { equation, dependentVariable, scope, ranges };
+    canvas.setActiveObject(eqText);
+    canvas.requestRenderAll();
+    showEquationMenu(eqText, window.extractedEquationData);
+    return window.extractedEquationData;
   } catch (error) {
     console.error('Error:', error);
     appendOutput(`<b>Error:</b><br>${error.message || 'Unknown error during extraction'}`, true);
@@ -340,13 +409,15 @@ export async function drawGraph() {
     const data = await response.json();
 
     if (data.success) {
-      renderGraph(data.data, dependentVariable);
-      const rangeKey = Object.keys(ranges)[0];
+      const variable = Object.keys(ranges)[0] || 'x';
+      renderGraph(data.data, dependentVariable, {
+        expression: equation, dependentVariable, variable,
+        xmin: ranges[variable][0], xmax: ranges[variable][1], ymin: null, ymax: null, fontScale: 1,
+      });
       appendOutput(
         `<b>Graph created for:</b> ${dependentVariable} = ${equation}<br>` +
         `<b>Points:</b> ${data.data.length}<br>` +
-        `<b>Range:</b> [${ranges[rangeKey][0]}, ${ranges[rangeKey][1]}]<br>` +
-        '<i>Graph displayed in bottom-right corner</i>'
+        `<b>Range:</b> [${ranges[variable][0]}, ${ranges[variable][1]}]`
       );
     } else {
       appendOutput(`<b>Error generating graph:</b><br>${data.message || 'Unknown error'}`, true);
@@ -354,5 +425,58 @@ export async function drawGraph() {
   } catch (error) {
     console.error('Error:', error);
     appendOutput(`<b>Error:</b><br>${error.message || 'Failed to generate graph'}`, true);
+  }
+}
+
+// Re-plot a selected graph with changed x/y limits (keeps its position & size).
+export async function replotGraph(graphImg, changes) {
+  if (!graphImg || !graphImg._plot) return;
+  const p = { ...graphImg._plot, ...changes };
+  const variable = p.variable || 'x';
+  try {
+    const response = await fetch('/graph', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expression: p.expression,
+        dependentVariable: p.dependentVariable,
+        scope: { [variable]: 0 },
+        ranges: { [variable]: [p.xmin, p.xmax] },
+      }),
+    });
+    const data = await response.json();
+    if (data.success) renderGraph(data.data, p.dependentVariable, p, graphImg);
+    else appendOutput(`<b>Error re-plotting:</b><br>${data.message || 'Unknown error'}`, true);
+  } catch (e) {
+    appendOutput(`<b>Error:</b><br>${e.message || 'Failed to re-plot'}`, true);
+  }
+}
+
+// When a graph is resized (raster-scaled by a handle drag), re-render it crisply
+// at the new pixel size — constant line/font thickness, more grid intervals.
+export function initGraphResize(canvas) {
+  if (!canvas) return;
+  canvas.on('object:modified', (e) => {
+    const o = e && e.target;
+    if (!o || !o._isGraph || !o._plot) return;
+    const sx = o.scaleX || 1;
+    const sy = o.scaleY || 1;
+    if (Math.abs(sx - 1) < 1e-3 && Math.abs(sy - 1) < 1e-3) return; // a move, not a resize
+    // New displayed size in scene px (the dragged size). Re-render at that size;
+    // the new image is at scale 1, so it lands exactly where the dragged one was.
+    const newW = Math.round(o.width * sx);
+    const newH = Math.round(o.height * sy);
+    replotGraph(o, { width: newW, height: newH });
+  });
+}
+
+// Re-plot every graph on the board (e.g. after toggling gridlines). Sequential
+// because all graphs share one offscreen render canvas.
+export async function replotAllGraphs() {
+  const canvas = getCanvas();
+  if (!canvas) return;
+  const graphs = canvas.getObjects().filter((o) => o._isGraph && o._plot);
+  for (const g of graphs) {
+    await replotGraph(g, {});
   }
 }

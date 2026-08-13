@@ -2,9 +2,11 @@
 
 import { getCanvas, undoLast, saveScreenshot, clearCanvas } from './canvas.js';
 import { IText } from 'fabric';
-import { solveEquationFromText, extractEquation, drawGraph } from './api.js';
-import { redrawLastGraph } from './graph.js';
+import { solveEquationFromText, extractEquation, analyzeRegionInk, analyzeText, parseTypedEquation, drawGraph, replotAllGraphs } from './api.js';
+import { startRegionSelect, inkInRegion } from './region-select.js';
+import { getDrawColor } from './draw-settings.js';
 import { toggleRecognition } from './speech.js';
+import { captureFrameBase64 } from './voice.js';
 
 let currentModel = 'math';
 
@@ -66,22 +68,31 @@ export function setupCanvasEventListeners() {
   const canvas = getCanvas();
   if (!canvas) return;
 
+  // Double-click to drop a blank text box ready for typing (handwriting font).
   canvas.on('mouse:dblclick', (options) => {
     const pointer = canvas.getPointer(options.e);
-    const text = new IText('Write equation here', {
+    const text = new IText('', {
       left: pointer.x,
       top: pointer.y,
-      fill: 'red',
-      fontSize: 24,
+      fill: getDrawColor(),
+      fontSize: 28,
       backgroundColor: 'transparent',
       selectable: true,
       editable: true,
       fontFamily: 'Caveat, cursive',
     });
+    // Drop it if empty; if it's an equation, tag it so selecting it shows the
+    // contextual menu (the menu is driven by selection, not edit-exit).
+    text.on('editing:exited', () => {
+      if (!text.text || !text.text.trim()) {
+        canvas.remove(text);
+      } else if (text.text.includes('=')) {
+        text._equationData = parseTypedEquation(text.text);
+      }
+    });
     canvas.add(text);
     canvas.setActiveObject(text);
     text.enterEditing();
-    text.selectAll();
   });
 }
 
@@ -113,7 +124,7 @@ export function initializeEventListeners() {
 
   const gridSel = document.getElementById('graph-grid-select');
   if (gridSel) {
-    gridSel.addEventListener('change', () => redrawLastGraph());
+    gridSel.addEventListener('change', () => replotAllGraphs());
   }
 
   const startRecordBtn = document.getElementById('start-record-btn');
@@ -123,7 +134,34 @@ export function initializeEventListeners() {
 
   const extractEqBtn = document.getElementById('extract-eq-btn');
   if (extractEqBtn) {
-    extractEqBtn.addEventListener('click', extractEquation);
+    extractEqBtn.addEventListener('click', () => {
+      // If a typed text equation is selected, analyze that; else read handwriting.
+      const canvas = getCanvas();
+      const active = canvas && canvas.getActiveObject();
+      if (active && (active.type === 'i-text' || active.type === 'text') &&
+          typeof active.text === 'string' && active.text.includes('=')) {
+        analyzeText(active);
+      } else {
+        extractEquation();
+      }
+    });
+  }
+
+  const regionAnalyzeBtn = document.getElementById('region-analyze-btn');
+  if (regionAnalyzeBtn) {
+    regionAnalyzeBtn.addEventListener('click', () => {
+      regionAnalyzeBtn.classList.add('active');
+      startRegionSelect((region) => {
+        regionAnalyzeBtn.classList.remove('active');
+        if (!region) return;
+        const ink = inkInRegion(getCanvas(), region);
+        if (!ink.length) {
+          alert('No handwriting found in the selected region.');
+          return;
+        }
+        analyzeRegionInk(ink);
+      });
+    });
   }
 
   const undoBtn = document.getElementById('undo-btn');
@@ -181,6 +219,19 @@ export function initializeEventListeners() {
     forceSolveBtn.addEventListener('click', () => {
       const equation = prompt('Enter equation to solve (e.g. x^2 + 3*x - 5 = 0):');
       if (equation) solveEquationFromText(equation);
+    });
+  }
+
+  // Download exactly what the voice assistant sees (board + coordinate grid).
+  const aiFrameBtn = document.getElementById('ai-frame-btn');
+  if (aiFrameBtn) {
+    aiFrameBtn.addEventListener('click', () => {
+      const b64 = captureFrameBase64();
+      if (!b64) return;
+      const link = document.createElement('a');
+      link.download = `ai-frame-${Date.now()}.jpg`;
+      link.href = 'data:image/jpeg;base64,' + b64;
+      link.click();
     });
   }
 }
