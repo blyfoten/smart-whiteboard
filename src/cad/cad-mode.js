@@ -19,7 +19,7 @@
 // (the "stray dot" a tap leaves) selects entities/dimensions for the toolbar's
 // constraint buttons. Point-dragging happens in Select mode (or held Space).
 
-import { Line as FabricLine, Circle as FabricCircle, IText, FabricText } from 'fabric';
+import { Line as FabricLine, Circle as FabricCircle, FabricText } from 'fabric';
 import { classifyStroke, pathToPoints, MIN_SIZE } from '../shape-classifier.js';
 import { Sketch } from './sketch.js';
 import { solveSketch } from './solver.js';
@@ -64,6 +64,7 @@ let _selection = [];     // [{ kind: 'point'|'entity'|'dim', id }]
 let _status = { ok: true, maxResidual: 0 };
 let _fxObjects = [];     // every Fabric object currently rendered for the sketch
 let _dragBefore = null;  // sketch snapshot at the start of a point drag
+let _dragMarkers = [];   // point markers being dragged (one, or a multi-selection)
 const _listeners = [];
 
 // --- change notification (toolbar chip + panel subscribe) ---
@@ -199,79 +200,86 @@ function lineGlyphs(lineId) {
   return out;
 }
 
+// Build the Fabric objects rendering the whole sketch, in stacking order
+// (lines and circles under markers). `skipPoints` names point markers that are
+// mid-drag: Fabric owns their position during a transform, so rebuilding them
+// underneath would fight the drag (and, inside a multi-selection, corrupt it).
+function buildObjects(skipPoints) {
+  const out = [];
+
+  for (const e of _sketch.entities) {
+    const selected = isSelected('entity', e.id);
+    const stroke = selected ? COLOR.selected : COLOR.entity;
+    if (e.type === 'line') {
+      const a = _sketch.point(e.p1);
+      const b = _sketch.point(e.p2);
+      if (!a || !b) continue;
+      out.push(new FabricLine([a.x, a.y, b.x, b.y], baseProps('entity', e.id, {
+        stroke, strokeWidth: 2, strokeLineCap: 'round',
+      })));
+      const glyphs = lineGlyphs(e.id);
+      if (glyphs.length) {
+        out.push(new FabricText(glyphs.join(''), baseProps('glyph', e.id, {
+          left: (a.x + b.x) / 2 + 6,
+          top: (a.y + b.y) / 2 + 6,
+          fontSize: 11,
+          fontFamily: 'sans-serif',
+          fill: COLOR.glyph,
+        })));
+      }
+    } else if (e.type === 'circle') {
+      const ctr = _sketch.point(e.c);
+      if (!ctr) continue;
+      out.push(new FabricCircle(baseProps('entity', e.id, {
+        left: ctr.x, top: ctr.y, originX: 'center', originY: 'center',
+        radius: Math.max(1, e.r), fill: '', stroke, strokeWidth: 2,
+      })));
+    }
+  }
+
+  // Point markers — the only selectable CAD rendering. Dragging one (or a
+  // marquee full of them) in Select mode moves the geometry via the solver.
+  for (const p of _sketch.points) {
+    if (skipPoints && skipPoints.has(p.id)) continue;
+    const selected = isSelected('point', p.id);
+    const fixed = isPointFixed(p.id);
+    out.push(new FabricCircle(baseProps('point', p.id, {
+      left: p.x, top: p.y, originX: 'center', originY: 'center',
+      radius: selected ? POINT_R + 1.5 : POINT_R,
+      fill: fixed ? COLOR.fixedFill : COLOR.pointFill,
+      stroke: selected ? COLOR.selected : COLOR.entity,
+      strokeWidth: 2,
+      selectable: true,
+      evented: true,
+      hoverCursor: 'move',
+    })));
+  }
+
+  // Dimension labels are derived annotations anchored to their geometry, like
+  // the H/V glyphs: not selectable, so a Select-mode marquee can never scoop
+  // one up and drag it away from what it measures. Edit them by tapping in CAD
+  // mode, or through the CAD context menu.
+  for (const c of _sketch.constraints) {
+    if (c.expr === undefined) continue;
+    const pos = dimLabelPosition(c);
+    if (!pos) continue;
+    out.push(new FabricText(dimText(c), baseProps('dim', c.id, {
+      left: pos.x, top: pos.y, originX: 'center', originY: 'center',
+      fontSize: 14,
+      fontFamily: 'sans-serif',
+      fill: isSelected('dim', c.id) ? COLOR.selected : COLOR.dim,
+      backgroundColor: 'rgba(255,255,255,0.85)',
+    })));
+  }
+
+  return out;
+}
+
 export function render() {
   if (!_canvas) return;
   historySuspend(() => {
     _fxObjects.forEach((o) => _canvas.remove(o));
-    _fxObjects = [];
-
-    // Entities first (lines under circles under markers under labels).
-    for (const e of _sketch.entities) {
-      const selected = isSelected('entity', e.id);
-      const stroke = selected ? COLOR.selected : COLOR.entity;
-      if (e.type === 'line') {
-        const a = _sketch.point(e.p1);
-        const b = _sketch.point(e.p2);
-        if (!a || !b) continue;
-        _fxObjects.push(new FabricLine([a.x, a.y, b.x, b.y], baseProps('entity', e.id, {
-          stroke, strokeWidth: 2, strokeLineCap: 'round',
-        })));
-        const glyphs = lineGlyphs(e.id);
-        if (glyphs.length) {
-          _fxObjects.push(new FabricText(glyphs.join(''), baseProps('glyph', e.id, {
-            left: (a.x + b.x) / 2 + 6,
-            top: (a.y + b.y) / 2 + 6,
-            fontSize: 11,
-            fontFamily: 'sans-serif',
-            fill: COLOR.glyph,
-          })));
-        }
-      } else if (e.type === 'circle') {
-        const ctr = _sketch.point(e.c);
-        if (!ctr) continue;
-        _fxObjects.push(new FabricCircle(baseProps('entity', e.id, {
-          left: ctr.x, top: ctr.y, originX: 'center', originY: 'center',
-          radius: Math.max(1, e.r), fill: '', stroke, strokeWidth: 2,
-        })));
-      }
-    }
-
-    // Point markers — draggable in Select mode; solver keeps constraints.
-    for (const p of _sketch.points) {
-      const selected = isSelected('point', p.id);
-      const fixed = isPointFixed(p.id);
-      _fxObjects.push(new FabricCircle(baseProps('point', p.id, {
-        left: p.x, top: p.y, originX: 'center', originY: 'center',
-        radius: selected ? POINT_R + 1.5 : POINT_R,
-        fill: fixed ? COLOR.fixedFill : COLOR.pointFill,
-        stroke: selected ? COLOR.selected : COLOR.entity,
-        strokeWidth: 2,
-        selectable: true,
-        evented: true,
-        hoverCursor: 'move',
-      })));
-    }
-
-    // Dimension labels (editable via click in CAD mode, double-click in Select).
-    for (const c of _sketch.constraints) {
-      if (c.expr === undefined) continue;
-      const pos = dimLabelPosition(c);
-      if (!pos) continue;
-      const label = new IText(dimText(c), baseProps('dim', c.id, {
-        left: pos.x, top: pos.y, originX: 'center', originY: 'center',
-        fontSize: 14,
-        fontFamily: 'sans-serif',
-        fill: isSelected('dim', c.id) ? COLOR.selected : COLOR.dim,
-        backgroundColor: 'rgba(255,255,255,0.85)',
-        selectable: true,
-        evented: true,
-        editable: true,
-        hoverCursor: 'text',
-      }));
-      label.on('editing:exited', () => _onDimEdited(c.id, label));
-      _fxObjects.push(label);
-    }
-
+    _fxObjects = buildObjects(null);
     _fxObjects.forEach((o) => _canvas.add(o));
   });
   _canvas.requestRenderAll();
@@ -737,27 +745,6 @@ export function editDimension(constraintId, promptFn = window.prompt) {
   commit(before);
 }
 
-// A dimension label edited in place (IText editing in Select mode). Accepts
-// "expr" or "expr = value" (the rendered form); re-solves on success.
-function _onDimEdited(constraintId, label) {
-  const c = _sketch.constraint(constraintId);
-  if (!c) { render(); return; }
-  let text = (label.text || '').trim();
-  const eq = text.indexOf('=');
-  if (eq >= 0) text = text.slice(0, eq).trim();
-  text = text.replace(/^R\s*/i, '').replace(/°\s*$/, '');
-  if (!text || text === c.expr) { render(); return; }
-  try {
-    _sketch.evalDim(text);
-  } catch (e) {
-    render(); // revert the label
-    return;
-  }
-  const before = _sketch.toJSON();
-  c.expr = text;
-  commit(before);
-}
-
 // Delete the current selection: entities (with their constraints/orphan
 // points) and dimension constraints. Selected bare points are ignored.
 export function deleteCadSelection() {
@@ -968,37 +955,37 @@ export function initCad(canvas, opts = {}) {
   _canvas = canvas;
   if (opts.getMode) _getMode = opts.getMode;
 
-  // Dragging a point marker (Select mode): pin it to the cursor and re-solve
-  // live, so the geometry follows but constraints never break.
+  // Dragging point markers in Select mode — one marker, or a whole marquee of
+  // them: each is pinned to where Fabric has moved it and the sketch re-solves
+  // live, so the lines follow the markers instead of being left behind, while
+  // constraints still win over the drag.
   canvas.on('mouse:down', (e) => {
-    const t = e.target;
-    if (t && t._cad && t._cad.kind === 'point' && _sketch.point(t._cad.id)) {
-      _dragBefore = _sketch.toJSON();
+    _dragMarkers = cadPointMarkers(e.target);
+    _dragBefore = _dragMarkers.length ? _sketch.toJSON() : null;
+  });
+
+  canvas.on('object:moving', () => {
+    if (!_dragMarkers.length) return;
+    const pins = new Map();
+    for (const marker of _dragMarkers) {
+      const p = _sketch.point(marker._cad.id);
+      if (p) pins.set(p.id, markerScenePosition(marker));
     }
+    if (!pins.size) return;
+    solve(pins);
+    syncFromModel(_dragMarkers);
   });
 
-  canvas.on('object:moving', (e) => {
-    const t = e.target;
-    if (!t || !t._cad || t._cad.kind !== 'point') return;
-    const p = _sketch.point(t._cad.id);
-    if (!p) return;
-    solve(new Map([[p.id, { x: t.left, y: t.top }]]));
-    syncFromModel(t);
-  });
-
-  canvas.on('object:modified', (e) => {
-    const t = e.target;
-    if (!t || !t._cad || t._cad.kind !== 'point' || !_dragBefore) return;
+  canvas.on('object:modified', () => {
+    if (!_dragMarkers.length || !_dragBefore) return;
     const before = _dragBefore;
     _dragBefore = null;
+    _dragMarkers = [];
     solve();
     render();
     pushSketchUndo(before);
     emitChanged();
   });
-
-  // A dimension label nudged accidentally in Select mode snaps back on render;
-  // deliberate moves aren't a feature (labels are anchored to their geometry).
 
   window.addEventListener('keydown', (ev) => {
     if (_getMode() !== 'cad') return;
@@ -1019,76 +1006,42 @@ export function initCad(canvas, opts = {}) {
   window.cadDebug = { getSketch, getSolveStatus, getCadSelection };
 }
 
-// Live update of rendered Fabric objects from the model during a drag. The
-// dragged marker is skipped (Fabric owns its position mid-transform); all
-// other objects are cheap to rebuild wholesale.
-function syncFromModel(draggedMarker) {
+// The CAD point markers a drag target covers: the object itself when a lone
+// marker is grabbed, or every marker inside a multi-object selection. Markers
+// whose point has since vanished from the model are filtered out.
+function cadPointMarkers(target) {
+  if (!target) return [];
+  const candidates = target._cad
+    ? [target]
+    : (typeof target.getObjects === 'function' ? target.getObjects() : []);
+  return candidates.filter(
+    (o) => o._cad && o._cad.kind === 'point' && _sketch.point(o._cad.id)
+  );
+}
+
+// A marker's centre in scene coordinates. Inside a multi-selection an object's
+// own left/top are group-relative, so the full transform matrix is the only
+// honest source — its translation is the centre (markers are centre-origin).
+function markerScenePosition(marker) {
+  const m = marker.calcTransformMatrix();
+  return { x: m[4], y: m[5] };
+}
+
+// Live update of the rendering from the model during a drag. The markers being
+// dragged are left alone (Fabric owns their position mid-transform, and inside
+// a multi-selection removing one would corrupt the selection); everything else
+// is cheap to rebuild wholesale.
+function syncFromModel(draggedMarkers) {
+  const keep = draggedMarkers.filter((o) => _fxObjects.includes(o));
+  const skipPoints = new Set(keep.map((o) => o._cad && o._cad.id).filter(Boolean));
   historySuspend(() => {
-    for (const o of _fxObjects) {
-      if (o === draggedMarker) continue;
-      _canvas.remove(o);
-    }
-    const dragged = draggedMarker && draggedMarker._cad ? draggedMarker._cad.id : null;
-    const keep = _fxObjects.includes(draggedMarker) ? [draggedMarker] : [];
-    _fxObjects = keep;
-
-    // Rebuild everything except the dragged marker (render() would remove it
-    // mid-drag and break the transform). Temporarily filter it during render.
-    const rebuilt = [];
-    const add = (obj) => { rebuilt.push(obj); };
-
-    // Reuse render()'s builders by calling render on a filtered basis is
-    // overkill here — draw entities, points (minus dragged), dims directly.
-    for (const e of _sketch.entities) {
-      const selected = isSelected('entity', e.id);
-      const stroke = selected ? COLOR.selected : COLOR.entity;
-      if (e.type === 'line') {
-        const a = _sketch.point(e.p1);
-        const b = _sketch.point(e.p2);
-        if (a && b) {
-          add(new FabricLine([a.x, a.y, b.x, b.y], baseProps('entity', e.id, {
-            stroke, strokeWidth: 2, strokeLineCap: 'round',
-          })));
-        }
-      } else if (e.type === 'circle') {
-        const ctr = _sketch.point(e.c);
-        if (ctr) {
-          add(new FabricCircle(baseProps('entity', e.id, {
-            left: ctr.x, top: ctr.y, originX: 'center', originY: 'center',
-            radius: Math.max(1, e.r), fill: '', stroke, strokeWidth: 2,
-          })));
-        }
-      }
-    }
-    for (const p of _sketch.points) {
-      if (p.id === dragged) continue;
-      const fixed = isPointFixed(p.id);
-      add(new FabricCircle(baseProps('point', p.id, {
-        left: p.x, top: p.y, originX: 'center', originY: 'center',
-        radius: POINT_R,
-        fill: fixed ? COLOR.fixedFill : COLOR.pointFill,
-        stroke: COLOR.entity,
-        strokeWidth: 2,
-        selectable: true,
-        evented: true,
-        hoverCursor: 'move',
-      })));
-    }
-    for (const c of _sketch.constraints) {
-      if (c.expr === undefined) continue;
-      const pos = dimLabelPosition(c);
-      if (!pos) continue;
-      add(new FabricText(dimText(c), baseProps('dim', c.id, {
-        left: pos.x, top: pos.y, originX: 'center', originY: 'center',
-        fontSize: 14, fontFamily: 'sans-serif', fill: COLOR.dim,
-        backgroundColor: 'rgba(255,255,255,0.85)',
-      })));
-    }
-
+    _fxObjects.forEach((o) => { if (!keep.includes(o)) _canvas.remove(o); });
+    const rebuilt = buildObjects(skipPoints);
     rebuilt.forEach((o) => _canvas.add(o));
-    _fxObjects.push(...rebuilt);
-    // Keep the dragged marker on top of the freshly added geometry.
-    if (keep.length) _canvas.bringObjectToFront(keep[0]);
+    _fxObjects = [...keep, ...rebuilt];
+    // A single dragged marker stays on top of the freshly added geometry. (For
+    // a multi-selection Fabric manages the group's own stacking.)
+    if (keep.length === 1) _canvas.bringObjectToFront(keep[0]);
   });
   _canvas.requestRenderAll();
 }
