@@ -1,12 +1,11 @@
 // providers/claude.js — Anthropic Claude vision extract + text solve.
 //
-// Defaults to claude-sonnet-5, the balanced tier of the current Claude 5 family.
-// Set CLAUDE_VISION_MODEL / CLAUDE_SOLVE_MODEL to claude-opus-5 for the hardest
-// handwriting, or back to claude-haiku-4-5-20251001 (still current, and the
-// cheapest vision-capable option) if this OCR-style workload doesn't need
-// Sonnet. Uses ANTHROPIC_API_KEY.
+// The caller passes the model id to use (the server resolves it from the
+// selected tier — see providers/catalogue.js, where the ladder is Haiku →
+// Sonnet → Opus). Uses ANTHROPIC_API_KEY.
 
 const { SYSTEM_PROMPT, EXTRACT_USER_PROMPT } = require('./schema');
+const { resolveModel } = require('./catalogue');
 
 // Guard the SDK require so a not-yet-installed package disables this provider
 // rather than crashing the whole server.
@@ -16,9 +15,6 @@ try {
 } catch (e) {
     console.warn('⚠️  `@anthropic-ai/sdk` package not installed — Claude provider disabled. Run `npm install`.');
 }
-
-const VISION_MODEL = process.env.CLAUDE_VISION_MODEL || 'claude-sonnet-5';
-const SOLVE_MODEL = process.env.CLAUDE_SOLVE_MODEL || 'claude-sonnet-5';
 
 // Accept either ANTHROPIC_API_KEY (SDK standard) or CLAUDE_API_KEY (alias).
 const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
@@ -45,14 +41,14 @@ module.exports = {
     name: 'claude',
     isConfigured: () => !!client,
 
-    async extract(image) {
+    async extract(image, model) {
         // Parse the data URL into media_type + base64 payload.
         const m = /^data:(.+?);base64,(.*)$/s.exec(image);
         const mediaType = m ? m[1] : 'image/jpeg';
         const data = m ? m[2] : image.split(',')[1];
 
         const resp = await client.messages.create({
-            model: VISION_MODEL,
+            model: model || resolveModel('claude', null, 'vision'),
             max_tokens: 1024,
             system: SYSTEM_PROMPT,
             messages: [
@@ -68,9 +64,9 @@ module.exports = {
         return parseJsonLoose(textOf(resp));
     },
 
-    async solve(equation) {
+    async solve(equation, model) {
         const resp = await client.messages.create({
-            model: SOLVE_MODEL,
+            model: model || resolveModel('claude', null, 'solve'),
             max_tokens: 1024,
             system: 'You are a mathematical assistant.',
             messages: [{ role: 'user', content: `Solve the equation: ${equation}` }],

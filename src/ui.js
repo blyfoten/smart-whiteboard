@@ -10,18 +10,65 @@ import { captureFrameBase64 } from './voice.js';
 import { consumePokeSelection } from './modes.js';
 
 let currentModel = 'math';
+let currentTier = 'fast';   // cheapest variant by default
+let modelCatalogue = null;  // from GET /models — drives the tier picker's labels
 
 export function getCurrentModel() {
   return currentModel;
 }
 
+// The variant of the selected provider to call: 'fast' | 'balanced' | 'max'.
+// Sent with every /extract and /solve request; the SERVER maps it to a model id
+// (the browser never names a model, so it can't reach for an arbitrary one).
+export function getCurrentTier() {
+  return currentTier;
+}
+
+// Relabel the tier options with the selected provider's own variant names —
+// "Fast & cheap (Luna)" for OpenAI, "(Haiku)" for Claude — so the ladder is
+// concrete rather than abstract. Falls back to the plain labels until the
+// catalogue arrives (or if the provider has no variants, e.g. local math.js).
+function refreshTierOptions() {
+  const sel = document.getElementById('model-tier-select');
+  if (!sel) return;
+  const entry = modelCatalogue && modelCatalogue.providers[currentModel];
+  const generic = { fast: 'Fast & cheap', balanced: 'Balanced', max: 'Best' };
+  sel.disabled = !entry;
+  sel.title = entry
+    ? `Which ${entry.label} variant to call`
+    : 'Math.js runs locally — no model variants to choose';
+  Array.from(sel.options).forEach((opt) => {
+    const step = entry && entry.tiers.find((t) => t.tier === opt.value);
+    opt.textContent = step ? `${generic[opt.value]} (${step.name})` : generic[opt.value];
+    if (step) opt.title = step.model;
+  });
+}
+
+async function loadModelCatalogue() {
+  try {
+    const resp = await fetch('/models');
+    if (!resp.ok) return;
+    modelCatalogue = await resp.json();
+  } catch (e) {
+    /* offline or old server — the picker keeps its generic labels */
+  }
+  refreshTierOptions();
+}
+
 export function initializeModelSelectionUI() {
+  const tierSelect = document.getElementById('model-tier-select');
+  if (tierSelect) {
+    if (tierSelect.value) currentTier = tierSelect.value;
+    tierSelect.addEventListener('change', (e) => { currentTier = e.target.value; });
+  }
+  loadModelCatalogue();
+
   const existingSelect = document.getElementById('model-select');
 
   if (existingSelect) {
     existingSelect.addEventListener('change', (e) => {
       currentModel = e.target.value;
-      console.log(`Model changed to: ${e.target.value}`);
+      refreshTierOptions(); // variant names differ per provider
     });
 
     if (existingSelect.value) {

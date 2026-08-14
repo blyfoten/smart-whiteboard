@@ -74,6 +74,7 @@ const path = require('path');
 // Vision/solve providers live behind a small interface (providers/). Model IDs
 // are centralized and env-overridable there.
 const providers = require('./providers');
+const catalogue = require('./providers/catalogue');
 const { validateExtraction } = require('./providers/schema');
 
 const app = express();
@@ -134,9 +135,13 @@ app.get('/plan', (req, res) => {
     res.sendFile(path.join(__dirname, 'docs', 'improvement-plan.html'));
 });
 
+// The model-tier catalogue the UI renders its picker from. Clients send a tier
+// KEY ('fast' | 'balanced' | 'max'), never a model id — see providers/catalogue.js.
+app.get('/models', (req, res) => res.json(catalogue.publicCatalogue()));
+
 // Shared handler for vision extraction across providers.
 async function handleExtract(req, res, providerName) {
-    const { image } = req.body;
+    const { image, tier } = req.body;
     if (!image) {
         return res.json({ success: false, message: 'No image received.' });
     }
@@ -148,7 +153,8 @@ async function handleExtract(req, res, providerName) {
         return res.json({ success: false, message: `${providerName} is not configured on the server.` });
     }
     try {
-        const data = await provider.extract(image);
+        const model = catalogue.resolveModel(providerName, tier, 'vision');
+        const data = await provider.extract(image, model);
         const errorMessage = validateExtraction(data);
         if (errorMessage) {
             return res.json({ success: false, message: errorMessage });
@@ -175,7 +181,7 @@ app.post('/extract-equation-gemini', aiLimiter, (req, res) => handleExtract(req,
 
 // API endpoint to solve equations with the selected model.
 app.post('/solve', aiLimiter, async (req, res) => {
-    const { equation, model = 'math' } = req.body;
+    const { equation, model = 'math', tier } = req.body;
     try {
         if (model === 'math') {
             const result = math.evaluate(equation);
@@ -188,7 +194,7 @@ app.post('/solve', aiLimiter, async (req, res) => {
         if (!provider.isConfigured()) {
             return res.json({ success: false, message: `${model} is not configured on the server.` });
         }
-        const result = await provider.solve(equation);
+        const result = await provider.solve(equation, catalogue.resolveModel(model, tier, 'solve'));
         if (result) {
             return res.json({ success: true, result });
         }

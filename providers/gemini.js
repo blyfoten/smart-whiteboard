@@ -1,11 +1,12 @@
 // providers/gemini.js — Google Gemini vision extract + text solve (@google/genai).
 //
-// GEMINI_MODEL is env-overridable (default gemini-3.7-flash — GA, and cheaper
-// per token than the 3.6/2.5 Flash it replaces; gemini-2.0-flash was shut down
-// 2026-06-01). responseMimeType forces raw JSON, so the markdown-fence fallback
-// in extract() is purely defensive.
+// The caller passes the model id to use (the server resolves it from the
+// selected tier — see providers/catalogue.js, where the ladder is Flash-Lite →
+// Flash → Pro). responseMimeType forces raw JSON, so the markdown-fence
+// fallback in extract() is purely defensive.
 
 const { SYSTEM_PROMPT, EXTRACT_USER_PROMPT } = require('./schema');
+const { resolveModel } = require('./catalogue');
 
 // Guard the SDK require so a not-yet-installed package disables this provider
 // rather than crashing the whole server.
@@ -15,8 +16,6 @@ try {
 } catch (e) {
     console.warn('⚠️  `@google/genai` package not installed — Gemini provider disabled. Run `npm install`.');
 }
-
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
 
 const genAI = GoogleGenAI && process.env.GEMINI_API_KEY
     ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
@@ -37,14 +36,14 @@ module.exports = {
     name: 'gemini',
     isConfigured: () => !!genAI,
 
-    async extract(image) {
+    async extract(image, model) {
         // Parse the data URL so we send the correct mime type (canvas exports JPEG).
         const m = /^data:(.+?);base64,(.*)$/s.exec(image);
         const mimeType = m ? m[1] : 'image/jpeg';
         const data = m ? m[2] : image.split(',')[1];
 
         const result = await genAI.models.generateContent({
-            model: GEMINI_MODEL,
+            model: model || resolveModel('gemini', null, 'vision'),
             contents: [
                 { inlineData: { mimeType, data } },
                 { text: EXTRACT_USER_PROMPT },
@@ -57,12 +56,12 @@ module.exports = {
         return parseJsonLoose((result.text || '').trim());
     },
 
-    async solve(equation) {
+    async solve(equation, model) {
         const prompt = `You are a mathematical assistant. Solve the equation: ${equation}
 
 Please provide a clear, concise solution. Don't use markdown formatting in your response.
 Simply start with "The solution is:" followed by the answer.`;
-        const result = await genAI.models.generateContent({ model: GEMINI_MODEL, contents: prompt });
+        const result = await genAI.models.generateContent({ model: model || resolveModel('gemini', null, 'solve'), contents: prompt });
         let solution = (result.text || '').trim();
         if (solution.includes('The solution is:')) {
             solution = solution.split('The solution is:')[1].trim();

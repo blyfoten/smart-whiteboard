@@ -10,6 +10,7 @@ const UID_COOKIE = 'sw_uid';
 // The <select> controls whose value is a persisted preference.
 const PREF_SELECTS = [
   'model-select',
+  'model-tier-select',
   'smart-shapes-select',
   'edge-snap-select',
   'graph-grid-select',
