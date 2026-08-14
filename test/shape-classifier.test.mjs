@@ -142,6 +142,47 @@ check('triangle → polygon', () => {
   assert.equal(d.points.length, 3);
 });
 
+// A closed quadrilateral whose corners sit near its bbox ellipse: it passes the
+// radial ellipse test numerically, so only comparing fit errors keeps it angular.
+function quadPts(v, per = 25) {
+  const pts = [];
+  const c = [...v, v[0]];
+  for (let i = 0; i < c.length - 1; i++) pts.push(...line(c[i], c[i + 1], per));
+  return pts;
+}
+
+check('romb (rotated quadrilateral) → polygon, not ellipse', () => {
+  // The reported case: a tilted, irregular four-sided shape.
+  const d = classifyStroke(quadPts([
+    { x: 830, y: 307 }, { x: 930, y: 680 }, { x: 590, y: 990 }, { x: 533, y: 595 },
+  ]));
+  assert.equal(d?.type, 'polygon');
+  assert.equal(d.points.length, 4);
+});
+
+check('diamond (bbox-edge midpoint vertices) → polygon', () => {
+  const d = classifyStroke(quadPts([
+    { x: 700, y: 300 }, { x: 900, y: 500 }, { x: 700, y: 700 }, { x: 500, y: 500 },
+  ]));
+  assert.equal(d?.type, 'polygon');
+  assert.equal(d.points.length, 4);
+});
+
+check('thin romb → polygon', () => {
+  const d = classifyStroke(quadPts([
+    { x: 700, y: 250 }, { x: 820, y: 500 }, { x: 700, y: 750 }, { x: 580, y: 500 },
+  ]));
+  assert.equal(d?.type, 'polygon');
+});
+
+check('shaky circle still → circle (not polygon)', () => {
+  // The ellipse-vs-polygon comparison must not flip a wobbly freehand circle.
+  const d = classifyStroke(ellipsePts(200, 200, 90, 90, 60).map((p) => ({
+    x: jitter(p.x, 9), y: jitter(p.y, 9),
+  })));
+  assert.equal(d?.type, 'circle');
+});
+
 check('closed notched (L) outline → polygon', () => {
   // A rectangle with a bite taken out of one corner (6 vertices), closed.
   const c = [

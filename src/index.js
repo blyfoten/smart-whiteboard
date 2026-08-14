@@ -12,9 +12,13 @@ import { initHistory } from './history.js';
 import { initStatePersistence } from './state.js';
 import { initDrawSettings } from './draw-settings.js';
 import { initMoveSnap } from './snap-move.js';
-import { initBoards } from './boards.js';
+import { initBoards, registerBoardExtension } from './boards.js';
 import { initBoardsPanel } from './boards-panel.js';
 import { solveEquation } from './api.js';
+import { initCad, getSketchJSON, loadSketchJSON } from './cad/cad-mode.js';
+import { initCadPanel } from './cad/cad-panel.js';
+import { initCadMenu } from './cad/cad-menu.js';
+import { getMode } from './modes.js';
 
 function handleCommand(command) {
   const canvas = getCanvas();
@@ -46,6 +50,12 @@ document.addEventListener('DOMContentLoaded', () => {
       initMoveSnap(canvas); // align-to-objects snapping while moving (toggleable)
       initGraphResize(canvas); // re-render graphs crisply when resized
       initEquationSelection(canvas); // selecting an equation shows the action menu
+      initCad(canvas, { getMode }); // parametric CAD sketching mode
+      initCadPanel();
+      initCadMenu(); // floating constraint/dimension menu beside CAD selections
+      // The CAD sketch model lives outside the Fabric object list — persist it
+      // with each board via the boards extension hook.
+      registerBoardExtension({ key: 'cad', save: getSketchJSON, load: loadSketchJSON });
 
       // Web fonts load async and Fabric renders text to the canvas, so re-render
       // once Caveat is available (otherwise the first text uses a fallback font).

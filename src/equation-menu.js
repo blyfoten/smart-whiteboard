@@ -136,11 +136,14 @@ function graphLimits(graph) {
   return wrap;
 }
 
-// Delete the current selection (one or many) as a single undo step.
+// Delete the current selection (one or many) as a single undo step. CAD
+// renderings are skipped: they're views of the sketch model, so removing the
+// Fabric object would only make the board disagree with the model until the
+// next re-render (CAD deletion goes through cad-mode's own handler).
 export function deleteActiveSelection() {
   const canvas = getCanvas();
   if (!canvas) return;
-  const objs = canvas.getActiveObjects();
+  const objs = canvas.getActiveObjects().filter((o) => !o._cad);
   if (!objs.length) return;
   canvas.discardActiveObject();
   historySuspend(() => objs.forEach((o) => canvas.remove(o)));
@@ -258,6 +261,13 @@ function onSelectionChanged() {
   if (!canvas) return;
   const active = canvas.getActiveObject();
   if (!active) return; // selection:cleared handler hides the menu
+  // A selection of CAD point markers gets no shape menu: its actions (line
+  // style, stacking order, delete) apply to ink, not to sketch renderings.
+  // Dragging such a selection moves the geometry — see cad-mode.js.
+  if (canvas.getActiveObjects().every((o) => o._cad)) {
+    hideEquationMenu();
+    return;
+  }
   const data = active.type === 'activeselection' ? null : equationDataFor(active);
   if (data) window.extractedEquationData = data; // Plot/Solve/Steps act on this one
   showEquationMenu(active, data);

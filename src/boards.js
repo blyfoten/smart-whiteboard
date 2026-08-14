@@ -23,6 +23,23 @@ const EXTRA_PROPS = ['id', '_isShape', '_isGraph', '_isExtracted', '_isSteps', '
 let _timer = null;
 let _suspend = false;
 const _listeners = [];
+const _extensions = [];
+
+// Modules with board-scoped state outside the Fabric object list (e.g. the CAD
+// sketch model) register { key, save() -> json?, load(json|undefined) }.
+// save()'s value is stored under `ext_<key>` in the board JSON; load() is
+// called with it on board load, and with undefined for a fresh/blank board.
+export function registerBoardExtension(ext) {
+  if (ext && ext.key && typeof ext.save === 'function' && typeof ext.load === 'function') {
+    _extensions.push(ext);
+  }
+}
+
+function extensionsLoad(parsed) {
+  _extensions.forEach((ext) => {
+    try { ext.load(parsed ? parsed['ext_' + ext.key] : undefined); } catch (e) { /* ignore */ }
+  });
+}
 
 function uid(p) {
   return `${p}${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
@@ -97,6 +114,12 @@ function snapshot(canvas) {
     EXTRA_PROPS.forEach((p) => {
       if (o[p] !== undefined && so[p] === undefined) so[p] = o[p];
     });
+  });
+  _extensions.forEach((ext) => {
+    try {
+      const v = ext.save();
+      if (v != null) data['ext_' + ext.key] = v;
+    } catch (e) { /* ignore */ }
   });
   return JSON.stringify(data);
 }
@@ -193,8 +216,10 @@ export async function loadBoard(id) {
       const parsed = JSON.parse(json);
       await canvas.loadFromJSON(parsed);
       restoreAfterLoad(canvas, parsed.objects);
+      extensionsLoad(parsed);
     } else {
       canvas.clear();
+      extensionsLoad(null);
     }
     canvas.backgroundColor = 'white';
     canvas.discardActiveObject();
@@ -223,6 +248,7 @@ export async function newBoard() {
     canvas.clear();
     canvas.backgroundColor = 'white';
     canvas.requestRenderAll();
+    extensionsLoad(null);
   } finally {
     _suspend = false;
   }
@@ -249,6 +275,7 @@ export async function initBoards() {
       canvas.backgroundColor = 'white';
       canvas.requestRenderAll();
     });
+    extensionsLoad(null);
     const newId = createBoard('Board 1');
     setCurrentBoardId(newId);
     clearHistory();

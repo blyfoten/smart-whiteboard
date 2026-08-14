@@ -98,7 +98,9 @@ function fitEllipse(pts, bb) {
   if (Math.abs(rx - ry) / Math.max(rx, ry) < 0.2) {
     rx = ry = (rx + ry) / 2; // snap near-circles to a true circle
   }
-  return { cx, cy, rx, ry };
+  // meanErr: the fit's mean radial error in pixels — comparable against a
+  // polygon reading's mean outline distance when both interpretations fit.
+  return { cx, cy, rx, ry, meanErr: dev * ((rx + ry) / 2) };
 }
 
 // Magnitude of the turn between two consecutive direction vectors (0..π).
@@ -387,6 +389,37 @@ function detectPolygon(pts, bb) {
   return { type: 'polygon', points: v.map((p) => ({ x: p.x, y: p.y })) };
 }
 
+// Distance from p to the segment a–b (not the infinite line).
+function pointSegmentDistance(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const l2 = dx * dx + dy * dy;
+  if (l2 === 0) return dist(p, a);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+// Mean distance from the stroke's points to a closed polygon's outline — the
+// polygon reading's fit error, comparable with fitEllipse's meanErr (px).
+function meanDistanceToPolygon(pts, verts) {
+  const n = verts.length;
+  let sum = 0;
+  for (const p of pts) {
+    let best = Infinity;
+    for (let i = 0; i < n; i++) {
+      const d = pointSegmentDistance(p, verts[i], verts[(i + 1) % n]);
+      if (d < best) best = d;
+    }
+    sum += best;
+  }
+  return sum / pts.length;
+}
+
+// How much better the polygon must fit before it beats the ellipse (a polygon
+// has more free parameters, so it always fits a little better).
+const ELLIPSE_BIAS = 1.6;
+
 // Fraction of points that stray well into the interior, away from the bounding
 // box outline. A real rectangle hugs its bbox (≈0); a heart, triangle or
 // staircase dips inside, so a sizable fraction strays. Guards rect detection
@@ -475,17 +508,29 @@ export function classifyStroke(pts) {
     return { type: 'rect', x: bb.minX, y: bb.minY, w: bb.w, h: bb.h };
   }
 
+  // Ellipse vs. polygon is decided by which reading actually fits the ink, not
+  // by trying one first: a rotated quadrilateral (a romb) passes the radial
+  // ellipse test numerically — its corners sit near the bbox ellipse and its
+  // sides bow inside it — so an order-based choice would call it an ellipse.
+  // Comparing mean fit error in pixels settles it: a real ellipse hugs the
+  // ellipse far better than any few-vertex polygon, and vice versa.
   const ell = fitEllipse(pts, bb);
-  if (ell) {
-    return {
-      type: ell.rx === ell.ry ? 'circle' : 'ellipse',
-      cx: ell.cx, cy: ell.cy, rx: ell.rx, ry: ell.ry,
-    };
-  }
-
-  // Not a rectangle or ellipse — try a clean closed polygon (triangle, diamond,
-  // notched outline, …) before giving up and leaving it as ink.
   const polygon = detectPolygon(pts, bb);
+  const asEllipse = () => ({
+    type: ell.rx === ell.ry ? 'circle' : 'ellipse',
+    cx: ell.cx, cy: ell.cy, rx: ell.rx, ry: ell.ry,
+  });
+
+  if (ell && polygon) {
+    // The margin favours the ellipse: a polygon has many more free parameters,
+    // so it always fits a bit better and would otherwise win on smooth strokes.
+    return meanDistanceToPolygon(pts, polygon.points) * ELLIPSE_BIAS < ell.meanErr
+      ? polygon
+      : asEllipse();
+  }
+  if (ell) return asEllipse();
+  // Not an ellipse — a clean closed polygon (triangle, diamond, notched
+  // outline, …) before giving up and leaving it as ink.
   if (polygon) return polygon;
 
   return null;

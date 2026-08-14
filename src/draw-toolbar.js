@@ -13,6 +13,10 @@ import {
   getSnapMove, setSnapMove,
   getSnapNodeOrtho, setSnapNodeOrtho,
 } from './draw-settings.js';
+import {
+  applyConstraint, addDimension, getSketch, getSolveStatus, onCadChanged,
+} from './cad/cad-mode.js';
+import { toggleCadPanel } from './cad/cad-panel.js';
 
 const LINE_STYLES = [
   { key: 'solid', label: '—', title: 'Solid line' },
@@ -117,12 +121,76 @@ function selectRow() {
   return group;
 }
 
+// CAD mode: constraint & dimension commands acting on the current CAD
+// selection (tap entities in CAD mode to select), plus the sketch panel.
+function cadRow() {
+  const group = el('div', 'sub-group');
+  const feedback = el('span', 'cad-feedback');
+
+  const cmd = (label, title, fn) => {
+    const chip = el('button', 'sub-chip', label);
+    chip.title = title;
+    chip.addEventListener('click', () => {
+      const err = fn();
+      feedback.textContent = err || '';
+    });
+    group.appendChild(chip);
+  };
+
+  group.appendChild(el('span', 'sub-label', 'Constrain'));
+  cmd('▬ H', 'Make selected line(s) horizontal', () => applyConstraint('horizontal'));
+  cmd('▮ V', 'Make selected line(s) vertical', () => applyConstraint('vertical'));
+  cmd('⟂', 'Make two selected lines perpendicular', () => applyConstraint('perpendicular'));
+  cmd('∥', 'Make two selected lines parallel', () => applyConstraint('parallel'));
+  cmd('=', 'Equal length (lines) or radius (circles)', () => applyConstraint('equal'));
+  cmd('⌖', 'Coincident: merge two points, or stick a point on a line', () => applyConstraint('coincident'));
+  cmd('📌', 'Fix/unfix selected point(s) in place', () => applyConstraint('fix'));
+
+  group.appendChild(el('span', 'sub-label', 'Dimension'));
+  cmd('📏', 'Dimension: line length, point distance, circle radius, or angle between two lines — accepts parameter expressions', () => addDimension());
+
+  const panelBtn = el('button', 'sub-chip', 'ƒx Sketch');
+  panelBtn.title = 'Parameters, constraints & solve status';
+  panelBtn.addEventListener('click', () => toggleCadPanel());
+  group.appendChild(panelBtn);
+
+  // Live solve/DOF status so over-/fully-constrained is visible at a glance.
+  const status = el('span', 'cad-toolbar-status');
+  status.id = 'cad-toolbar-status';
+  _updateCadStatusEl(status);
+  group.appendChild(status);
+  group.appendChild(feedback);
+  return group;
+}
+
+// The status span is re-created on every toolbar render, so the single
+// module-level onCadChanged subscription looks it up by id each time.
+function _updateCadStatus() {
+  const status = document.getElementById('cad-toolbar-status');
+  if (status) _updateCadStatusEl(status);
+}
+
+function _updateCadStatusEl(status) {
+  const sketch = getSketch();
+  if (sketch.isEmpty()) { status.textContent = ''; return; }
+  const s = getSolveStatus();
+  if (!s.ok) { status.textContent = '⚠ conflict'; status.style.color = '#c92a2a'; return; }
+  const dof = sketch.degreesOfFreedom();
+  status.style.color = dof <= 0 ? '#2b8a3e' : '#666';
+  status.textContent = dof <= 0 ? '✓ fully constrained' : `${dof} DOF`;
+}
+onCadChanged(_updateCadStatus);
+
 function render(mode) {
   const bar = document.getElementById('sub-toolbar');
   if (!bar) return;
   bar.innerHTML = '';
   if (mode === 'select') {
     bar.appendChild(selectRow());
+    return;
+  }
+  if (mode === 'cad') {
+    bar.appendChild(cadRow());
     return;
   }
   bar.appendChild(colorRow());

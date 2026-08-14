@@ -7,6 +7,7 @@ import { startRegionSelect, inkInRegion } from './region-select.js';
 import { getDrawColor } from './draw-settings.js';
 import { toggleRecognition } from './speech.js';
 import { captureFrameBase64 } from './voice.js';
+import { consumePokeSelection } from './modes.js';
 
 let currentModel = 'math';
 
@@ -70,6 +71,9 @@ export function setupCanvasEventListeners() {
 
   // Double-click to drop a blank text box ready for typing (handwriting font).
   canvas.on('mouse:dblclick', (options) => {
+    // Unless the first click was a poke that selected a shape — then the
+    // double-click was aimed at that shape, not at empty board.
+    if (consumePokeSelection()) return;
     const pointer = canvas.getPointer(options.e);
     const text = new IText('', {
       left: pointer.x,

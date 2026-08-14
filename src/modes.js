@@ -1,13 +1,17 @@
-// src/modes.js — interaction modes (draw / select / shapes) + smart-shape snapping
+// src/modes.js — interaction modes (draw / select / shapes / cad) + smart-shape snapping
 //
 // Draw   : freehand ink, nothing selectable (today's behavior, equation OCR safe)
 // Select : Fabric native select / move / resize / rotate / multi-select
 // Shapes : freehand ink that snaps to clean primitives on stroke completion
+// CAD    : freehand ink that becomes parametric sketch geometry (cad/cad-mode.js);
+//          a tap (stray-dot click) selects entities for the constraint toolbar
 //
 // A "Smart shapes" setting (off / manual / auto) controls when snapping fires.
 // Hold Space to temporarily drop into Select without leaving the current mode.
 
 import { pathToPoints, recognizeStroke } from './shapes.js';
+import { cadHandleStroke, cadHandleClick, isCadTap, notifyModeChanged } from './cad/cad-mode.js';
+import { pointerSlop } from './pointer.js';
 import { snapPointToShapes, toTargetLocal, fromTargetLocal } from './edge-snap.js';
 import { applyVertexSceneMove, getVertexScenePosition } from './node-edit.js';
 import { suspend as historySuspend, popLast as historyPopLast, pushComposite, onAfterUndo } from './history.js';
@@ -15,7 +19,12 @@ import { deleteActiveSelection } from './equation-menu.js';
 import { getDrawColor, computedShapeFill, getCornerRadius, getLineStyle } from './draw-settings.js';
 import { toggleSubToolbar, showSubToolbar, isSubToolbarOpen } from './draw-toolbar.js';
 
-let _mode = 'draw';                 // 'draw' | 'select' | 'shapes'
+const MODES = ['draw', 'select', 'shapes', 'cad'];
+const POKE_PX = 22;                 // screen-pixel reach of a poke-to-select tap
+
+let _mode = 'draw';                 // one of MODES
+let _pokeReturnMode = null;         // drawing mode a poke came from (Esc returns)
+let _pokeAt = null;                 // when a poke last selected something
 let _smartShapes = 'manual';        // 'off' | 'manual' | 'auto'
 let _edgeSnap = 'on';               // 'on' | 'off' — endpoint edge-snap + sticky anchors
 let _canvas = null;
@@ -52,17 +61,18 @@ function _applyModeToCanvas() {
 }
 
 function _updateButtons() {
-  ['draw', 'select', 'shapes'].forEach((m) => {
+  MODES.forEach((m) => {
     const btn = document.getElementById(`mode-${m}`);
     if (btn) btn.classList.toggle('active', m === _mode);
   });
 }
 
 export function setMode(mode) {
-  if (!['draw', 'select', 'shapes'].includes(mode)) return;
+  if (!MODES.includes(mode)) return;
   _mode = mode;
   _applyModeToCanvas();
   _updateButtons();
+  notifyModeChanged(); // mode-dependent CAD UI (context menu) re-evaluates
 }
 
 export function setSmartShapes(value) {
@@ -148,16 +158,81 @@ function _reanchorNodeAfterDrag(poly, i) {
   _canvas.requestRenderAll();
 }
 
-// A click (no drag) in draw mode leaves a zero-size "dot" path — e.g. the two
-// clicks of a double-click, or clicking away from a text box. Discard those
-// degenerate strokes (drawn marks/decimal points are bigger and kept).
-function _removeStrayDot(e) {
-  const p = e && e.path;
-  if (!p) return false;
-  if (Math.max(p.width || 0, p.height || 0) >= 3) return false;
+// Drop a just-drawn path, leaving no trace in the undo history.
+function _discardPath(p) {
   historyPopLast();                          // drop its just-recorded add-entry
   historySuspend(() => _canvas.remove(p));   // remove without recording
+}
+
+// A click (no drag) leaves a degenerate "dot" path — the two clicks of a
+// double-click, clicking away from a text box, or a deliberate poke. A mark the
+// user actually drew always involves some movement, so the threshold stays
+// tight (widened a little for coarse pointers, which wobble): every stroke that
+// becomes ink today still does, and dots/decimal points are untouched.
+function _isStrayDot(p) {
+  return !!p && Math.max(p.width || 0, p.height || 0) < pointerSlop(3, 2.5);
+}
+
+function _removeStrayDot(e) {
+  const p = e && e.path;
+  if (!_isStrayDot(p)) return false;
+  _discardPath(p);
   return true;
+}
+
+// Distance from a point to a rectangle — 0 when the point is inside it.
+function _distToRect(x, y, r) {
+  const dx = Math.max(r.left - x, 0, x - (r.left + r.width));
+  const dy = Math.max(r.top - y, 0, y - (r.top + r.height));
+  return Math.hypot(dx, dy);
+}
+
+// What a poke at (x, y) grabs: the topmost object whose bounds contain the
+// point, else the nearest one within POKE_PX. CAD renderings are skipped (CAD
+// mode does its own, model-aware hit testing), as are ghosts and the transient
+// snap guides.
+function _pokeTarget(x, y) {
+  const max = pointerSlop(POKE_PX) / (_canvas.getZoom() || 1);
+  const objs = _canvas.getObjects();
+  let best = null;
+  let bestDist = Infinity;
+  for (let i = objs.length - 1; i >= 0; i--) { // topmost first
+    const o = objs[i];
+    if (o.selectable === false || o._isGhost || o._cad || o.excludeFromExport) continue;
+    const d = _distToRect(x, y, o.getBoundingRect());
+    if (d === 0) return o;                     // inside the topmost hit → done
+    if (d < bestDist && d <= max) {
+      bestDist = d;
+      best = o;
+    }
+  }
+  return best;
+}
+
+// Poke-to-select: a tap in Draw or Shapes mode grabs the object under (or
+// nearest to) it and drops into Select mode, so it can be moved, restyled or
+// deleted without first hunting for the toolbar. Escape returns to drawing.
+// Returns true if something was selected.
+function _pokeSelect(path) {
+  const x = (path.left || 0) + (path.width || 0) / 2;
+  const y = (path.top || 0) + (path.height || 0) / 2;
+  const target = _pokeTarget(x, y);
+  if (!target) return false;
+  _pokeReturnMode = _mode;
+  _pokeAt = Date.now();
+  setMode('select');
+  _canvas.setActiveObject(target);
+  _canvas.requestRenderAll();
+  return true;
+}
+
+// True when a poke just selected something (within `withinMs`), consuming the
+// flag. The double-click-to-add-text handler asks, so poking an object doesn't
+// also drop a text box on top of it.
+export function consumePokeSelection(withinMs = 500) {
+  const recent = _pokeAt !== null && Date.now() - _pokeAt <= withinMs;
+  _pokeAt = null;
+  return recent;
 }
 
 // Swap a freehand path for a recognized primitive, with a brief fade-in.
@@ -234,6 +309,7 @@ export function initModes(canvas) {
   const onModeButton = (mode) => {
     const wasOpen = isSubToolbarOpen();
     const sameMode = _mode === mode;
+    _pokeReturnMode = null; // an explicit mode choice ends the poke round-trip
     setMode(mode);
     if (sameMode) {
       toggleSubToolbar(mode);
@@ -241,12 +317,10 @@ export function initModes(canvas) {
       showSubToolbar(mode);
     }
   };
-  const drawBtn = document.getElementById('mode-draw');
-  const selectBtn = document.getElementById('mode-select');
-  const shapesBtn = document.getElementById('mode-shapes');
-  if (drawBtn) drawBtn.addEventListener('click', () => onModeButton('draw'));
-  if (selectBtn) selectBtn.addEventListener('click', () => onModeButton('select'));
-  if (shapesBtn) shapesBtn.addEventListener('click', () => onModeButton('shapes'));
+  MODES.forEach((m) => {
+    const btn = document.getElementById(`mode-${m}`);
+    if (btn) btn.addEventListener('click', () => onModeButton(m));
+  });
 
   const smartSelect = document.getElementById('smart-shapes-select');
   if (smartSelect) {
@@ -260,7 +334,29 @@ export function initModes(canvas) {
     edgeSnapSelect.addEventListener('change', (ev) => setEdgeSnap(ev.target.value));
   }
 
-  canvas.on('path:created', (e) => { if (!_removeStrayDot(e)) _onPathCreated(e); });
+  canvas.on('path:created', (e) => {
+    if (_mode === 'cad') {
+      // In CAD mode any stroke too small to become geometry is a tap: select
+      // the sketch entity under it. This keeps poking a line forgiving — a
+      // finger tap that slips a few pixels selects instead of leaving a speck
+      // of ink. Bigger strokes become parametric geometry (or stay as ink
+      // annotation when the recognizer doesn't claim them).
+      if (isCadTap(e.path)) {
+        _discardPath(e.path);
+        cadHandleClick(e.path);
+      } else {
+        cadHandleStroke(e.path);
+      }
+      return;
+    }
+    // Draw / Shapes: a tap that isn't a drawn mark is a poke — it grabs what
+    // it landed on (and is simply discarded, as before, when it hits nothing).
+    if (_removeStrayDot(e)) {
+      _pokeSelect(e.path);
+      return;
+    }
+    _onPathCreated(e);
+  });
   // After an undo, re-pin anchored nodes (e.g. a restored/relocated target).
   onAfterUndo(() => _reapplyAnchors(null));
   // Sticky anchors: anchored polyline nodes follow their shape as it moves.
@@ -315,10 +411,24 @@ export function initModes(canvas) {
     }
   });
 
-  // Delete / Backspace removes the current selection (unless typing).
+  // Escape after a poke: drop the selection and go back to drawing, so the
+  // whole detour is poke → restyle/move → Esc without touching the toolbar.
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || _pokeReturnMode === null || _isTyping()) return;
+    const back = _pokeReturnMode;
+    _pokeReturnMode = null;
+    _canvas.discardActiveObject();
+    _canvas.requestRenderAll();
+    setMode(back);
+  });
+
+  // Delete / Backspace removes the current selection (unless typing). CAD
+  // renderings (markers, dimension labels) are views of the sketch model, not
+  // deletable objects — CAD deletion goes through cad-mode's own handler.
   window.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Delete' && ev.key !== 'Backspace') return;
-    if (_isTyping() || !_canvas.getActiveObject()) return;
+    const active = _canvas.getActiveObject();
+    if (_isTyping() || !active || active._cad) return;
     ev.preventDefault();
     deleteActiveSelection();
   });
