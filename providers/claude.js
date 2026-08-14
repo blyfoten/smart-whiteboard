@@ -1,8 +1,10 @@
 // providers/claude.js — Anthropic Claude vision extract + text solve.
 //
-// Defaults to claude-haiku-4-5 (fast/cheap, vision-capable) for this OCR-style
-// workload; set CLAUDE_VISION_MODEL / CLAUDE_SOLVE_MODEL to e.g. claude-opus-4-8
-// for the hardest handwriting. Uses ANTHROPIC_API_KEY.
+// Defaults to claude-sonnet-5, the balanced tier of the current Claude 5 family.
+// Set CLAUDE_VISION_MODEL / CLAUDE_SOLVE_MODEL to claude-opus-5 for the hardest
+// handwriting, or back to claude-haiku-4-5-20251001 (still current, and the
+// cheapest vision-capable option) if this OCR-style workload doesn't need
+// Sonnet. Uses ANTHROPIC_API_KEY.
 
 const { SYSTEM_PROMPT, EXTRACT_USER_PROMPT } = require('./schema');
 
@@ -15,8 +17,8 @@ try {
     console.warn('⚠️  `@anthropic-ai/sdk` package not installed — Claude provider disabled. Run `npm install`.');
 }
 
-const VISION_MODEL = process.env.CLAUDE_VISION_MODEL || 'claude-haiku-4-5';
-const SOLVE_MODEL = process.env.CLAUDE_SOLVE_MODEL || 'claude-haiku-4-5';
+const VISION_MODEL = process.env.CLAUDE_VISION_MODEL || 'claude-sonnet-5';
+const SOLVE_MODEL = process.env.CLAUDE_SOLVE_MODEL || 'claude-sonnet-5';
 
 // Accept either ANTHROPIC_API_KEY (SDK standard) or CLAUDE_API_KEY (alias).
 const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;

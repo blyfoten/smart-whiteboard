@@ -2,6 +2,12 @@
 //
 // Model IDs are env-overridable. If a default ever 404s (model renamed/retired),
 // set OPENAI_VISION_MODEL / OPENAI_SOLVE_MODEL rather than editing code.
+//
+// Defaults to gpt-5.6-terra, the balanced tier of the current GPT-5.6 family —
+// ample for reading an equation off the board and solving it, at a third of the
+// flagship's token price. The family is gpt-5.6-sol (deepest reasoning; the bare
+// `gpt-5.6` alias routes here), -terra (balanced), -luna (fastest/cheapest);
+// swap tiers via the env vars.
 
 const { SYSTEM_PROMPT, EXTRACT_USER_PROMPT } = require('./schema');
 
@@ -15,8 +21,8 @@ try {
     console.warn('⚠️  `openai` package not installed — OpenAI provider disabled. Run `npm install`.');
 }
 
-const VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-5.4';
-const SOLVE_MODEL = process.env.OPENAI_SOLVE_MODEL || 'gpt-5.4';
+const VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-5.6-terra';
+const SOLVE_MODEL = process.env.OPENAI_SOLVE_MODEL || 'gpt-5.6-terra';
 
 const client = OpenAI && process.env.OPENAI_API_KEY
     ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })

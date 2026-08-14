@@ -1,8 +1,9 @@
 // providers/gemini.js — Google Gemini vision extract + text solve (@google/genai).
 //
-// GEMINI_MODEL is env-overridable (default gemini-2.5-flash; gemini-2.0-flash was
-// shut down 2026-06-01). responseMimeType forces raw JSON, so the markdown-fence
-// fallback in extract() is purely defensive.
+// GEMINI_MODEL is env-overridable (default gemini-3.7-flash — GA, and cheaper
+// per token than the 3.6/2.5 Flash it replaces; gemini-2.0-flash was shut down
+// 2026-06-01). responseMimeType forces raw JSON, so the markdown-fence fallback
+// in extract() is purely defensive.
 
 const { SYSTEM_PROMPT, EXTRACT_USER_PROMPT } = require('./schema');
 
@@ -15,7 +16,7 @@ try {
     console.warn('⚠️  `@google/genai` package not installed — Gemini provider disabled. Run `npm install`.');
 }
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
 
 const genAI = GoogleGenAI && process.env.GEMINI_API_KEY
     ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })

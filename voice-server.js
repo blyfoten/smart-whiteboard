@@ -67,22 +67,23 @@ const TOOLS = Type ? [{
 }] : null;
 
 // The Live model id differs by API provider, and simultaneous video+audio+tools
-// works best on 3.x-Flash live models (per Google's own guidance); native-audio
-// models reject tool calls entirely. Try the most capable tool-friendly models
-// first, falling back through 2.5 half-cascade to native-audio (voice only).
-// Override with GEMINI_LIVE_MODEL to pin one.
+// works best on the Flash *live* models; native-audio models reject tool calls
+// entirely. Try the most capable tool-friendly models first, falling back to
+// native-audio (voice only). Each miss costs an 8s connect timeout, so the list
+// holds models Google actually documents rather than speculative names.
+//
+// NOTE: the Live API tracks the main model line separately — as of 2026-08 the
+// newest live model is 3.1-Flash-Live even though the text/vision default is
+// now gemini-3.7-flash. When a newer live preview ships, put it first here (or
+// just set GEMINI_LIVE_MODEL, no code change needed).
 const CANDIDATE_MODELS = process.env.GEMINI_LIVE_MODEL
     ? [process.env.GEMINI_LIVE_MODEL]
     : [
-        'gemini-3.5-flash-live-preview',                  // 3.5 — best at video+audio+tools
-        'gemini-live-3.5-flash-preview',
-        'gemini-3.1-flash-live-preview',
-        'gemini-live-2.5-flash-preview',                  // half-cascade — strong tool calling
+        'gemini-3.1-flash-live-preview',                       // newest live model: video+audio+tools
+        'gemini-live-2.5-flash-preview',                       // half-cascade — strong tool calling
         'gemini-2.5-flash-live-preview',
-        'gemini-2.0-flash-live-001',                      // half-cascade fallback
-        'gemini-2.5-flash-native-audio-preview-12-2025',  // native audio (great voice, no tools)
-        'gemini-2.5-flash-preview-native-audio-dialog',
-        'gemini-live-2.5-flash-native-audio',
+        'gemini-live-2.5-flash-preview-native-audio-09-2025',  // native audio (great voice, no tools)
+        'gemini-2.5-flash-native-audio-preview-12-2025',
     ];
 
 const SYSTEM_INSTRUCTION = `You are a friendly, concise voice tutor and drawing collaborator on a shared math whiteboard.
