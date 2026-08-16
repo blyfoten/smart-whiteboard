@@ -37,10 +37,18 @@ function storePath(id) {
     return path.join(STORE_DIR, `${id}.json`);
 }
 
+// A session file holds the whole transcript, screenshot included — megabytes.
+// The picker only needs the header, so it is written alongside as a small
+// companion file and the list never opens the big ones.
+function metaPath(id) {
+    return path.join(STORE_DIR, `${id}.meta.json`);
+}
+
 function persist(session) {
     try {
         fs.mkdirSync(STORE_DIR, { recursive: true });
         fs.writeFileSync(storePath(session.id), JSON.stringify(session), 'utf8');
+        fs.writeFileSync(metaPath(session.id), JSON.stringify(publicState(session)), 'utf8');
     } catch (e) {
         console.warn('debug session persist failed:', e.message);
     }
@@ -130,12 +138,45 @@ function imageBlock(screenshot) {
     return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
 }
 
+// Where a new session's branch should start from.
+//
+// If the deployment is sitting on an earlier session's debug branch, branching
+// from HEAD would silently inherit that session's commits — which is how a first
+// session ends up abandoned at its base while a second one carries its work. So
+// walk back to what that session itself started from, and make sure the branch
+// being left behind is pushed rather than orphaned locally.
+async function resolveBase() {
+    const current = await workspace.currentBranch();
+    const owner = list().find((s) => s.branch === current);
+    if (!owner) return { base: current, preserved: null };
+
+    let preserved = null;
+    const unpushed = await workspace.unpushedCount(current);
+    if (unpushed !== 0) {
+        const ahead = await workspace.commitsAhead(current, owner.baseBranch);
+        if (ahead > 0) {
+            const res = await workspace.push(current);
+            preserved = { branch: current, commits: ahead, pushed: res.ok, message: res.message };
+            const prior = sessions.get(owner.id);
+            if (prior) {
+                emit(prior, {
+                    kind: 'info',
+                    message: res.ok
+                        ? `Pushed ${ahead} commit(s) on ${current} before a new debug session started.`
+                        : `Could not push ${current} before a new session started: ${res.message}`,
+                });
+            }
+        }
+    }
+    return { base: owner.baseBranch, preserved };
+}
+
 async function create({ report: rawReport, context, screenshot } = {}) {
     if (!isConfigured()) {
         throw new Error('The debug coding agent is not configured — the server needs ANTHROPIC_API_KEY.');
     }
     const { report, warnings } = normalizeBugReport(rawReport);
-    const baseBranch = await workspace.currentBranch();
+    const { base: baseBranch, preserved } = await resolveBase();
     // Uncommitted work in the deployment's tree comes along onto the new branch
     // (git's own behaviour). Say so in the briefing rather than letting the agent
     // mistake someone else's edits for its own.
@@ -184,7 +225,8 @@ async function create({ report: rawReport, context, screenshot } = {}) {
         cancelled: false,
     };
     sessions.set(session.id, session);
-    emit(session, { kind: 'info', message: `Debug session started on branch ${branch}.` });
+    session.preserved = preserved;
+    emit(session, { kind: 'info', message: `Debug session started on branch ${branch} (from ${baseBranch}).` });
     persist(session);
     return session;
 }
@@ -278,8 +320,48 @@ async function end(session, { push = true } = {}) {
     return { ok: true, branch: session.branch, pushed: !!(pushResult && pushResult.ok) };
 }
 
+// Every session this server knows about, newest first: the live ones plus the
+// headers of any left on disk by an earlier run. This is what the picker in the
+// debug panel lists, the same way the boards panel lists saved boards.
 function list() {
-    return Array.from(sessions.values()).map(publicState);
+    const live = new Map(Array.from(sessions.values()).map((s) => [s.id, publicState(s)]));
+    let files = [];
+    try {
+        files = fs.readdirSync(STORE_DIR).filter((f) => f.endsWith('.meta.json'));
+    } catch (e) {
+        files = []; // no store yet
+    }
+    for (const file of files) {
+        const id = file.replace(/\.meta\.json$/, '');
+        if (live.has(id)) continue;
+        try {
+            const meta = JSON.parse(fs.readFileSync(path.join(STORE_DIR, file), 'utf8'));
+            // A session persisted mid-turn was cut off by the restart, not left working.
+            if (meta.status === 'working') meta.status = 'idle';
+            live.set(id, meta);
+        } catch (e) { /* skip a corrupt header */ }
+    }
+    return Array.from(live.values()).sort((a, b) => b.createdAt - a.createdAt);
 }
 
-module.exports = { isConfigured, create, get, send, cancel, end, list, subscribe, publicState, emit, STORE_DIR };
+// Forget a session: drop it from memory and delete its files. The git branch is
+// deliberately left alone — the work on it is the whole point.
+function remove(id) {
+    const session = sessions.get(id);
+    if (session && session.status === 'working') {
+        return { ok: false, message: 'That session is still working — stop or end it first.' };
+    }
+    if (session) {
+        session.cancelled = true;
+        sessions.delete(id);
+    }
+    listeners.delete(id);
+    for (const file of [storePath(id), metaPath(id)]) {
+        try { fs.rmSync(file, { force: true }); } catch (e) { /* already gone */ }
+    }
+    return { ok: true, id };
+}
+
+module.exports = {
+    isConfigured, create, get, send, cancel, end, list, remove, subscribe, publicState, emit, STORE_DIR,
+};

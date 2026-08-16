@@ -358,6 +358,40 @@
       cursor: pointer;
     }
     .debug-header b { font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #debug-hide {
+      border: none; background: none; cursor: pointer;
+      font-size: 15px; line-height: 1; color: #888; padding: 0 2px;
+    }
+    #debug-hide:hover { color: #333; }
+    #debug-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    #debug-body.hidden { display: none; }
+    #debug-btn.hidden { display: none; }
+
+    /* Session picker — the same idea as the boards panel: pick one, drop one. */
+    #debug-list-toggle {
+      border: none; background: none; cursor: pointer; text-align: left;
+      font-size: 11px; color: #666; padding: 4px 10px;
+    }
+    #debug-list-toggle:hover { color: #4527a0; }
+    #debug-sessions { max-height: 26vh; overflow-y: auto; border-bottom: 1px solid #e0d6f0; }
+    #debug-sessions.hidden { display: none; }
+    .debug-session-row {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 10px; cursor: pointer; border-left: 3px solid transparent;
+    }
+    .debug-session-row:hover { background: #f5f1fb; }
+    .debug-session-row.active { background: #ede7f6; border-left-color: #7e57c2; }
+    .debug-session-label {
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .debug-session-when { font-size: 10.5px; color: #888; white-space: nowrap; }
+    .debug-session-del {
+      border: none; background: none; cursor: pointer; color: #aaa;
+      font-size: 12px; padding: 0 2px; visibility: hidden;
+    }
+    .debug-session-row:hover .debug-session-del { visibility: visible; }
+    .debug-session-del:hover { color: #c62828; }
+    .debug-session-empty { padding: 8px 10px; color: #999; font-size: 11px; line-height: 1.4; }
     .debug-pill {
       font-size: 11px;
       padding: 1px 7px;
@@ -476,6 +510,7 @@
       </div>
       <div class="btn-group">
         <button id="voice-btn" class="icon-btn" title="Voice mode (Gemini Live)" aria-label="Voice mode">🎤</button>
+        <button id="debug-btn" class="icon-btn hidden" title="Debug sessions (backend coding agent)" aria-label="Debug sessions">🛠️</button>
         <button id="extract-eq-btn" class="icon-btn" title="Analyze drawing → text / math expression" aria-label="Analyze drawing">🕵️</button>
         <button id="region-analyze-btn" class="icon-btn" title="Analyze a region (drag a box around the equation)" aria-label="Analyze a region">⛶</button>
         <button id="graph-btn" class="icon-btn" title="Draw graph of last equation" aria-label="Draw graph">📈</button>
@@ -572,16 +607,21 @@
     <div id="debug-panel" class="hidden">
       <div class="debug-header" id="debug-collapse">
         <span>🛠️</span>
-        <b id="debug-title">Debug session</b>
+        <b id="debug-title">Debug sessions</b>
         <span id="debug-status" class="debug-pill">idle</span>
+        <button id="debug-hide" title="Hide this panel" aria-label="Hide debug panel">×</button>
       </div>
-      <div id="debug-meta"></div>
-      <div id="debug-log"></div>
-      <div class="debug-controls">
-        <input type="text" id="debug-input" placeholder="Tell the coding agent something…" />
-        <button id="debug-send" title="Send to the coding agent">Send</button>
-        <button id="debug-reload" class="hidden" title="The fix changed the page — reload to load it">Reload</button>
-        <button id="debug-end" title="Commit, push and close this debug session">End session</button>
+      <button id="debug-list-toggle" title="All debug sessions on this server">▾ Sessions</button>
+      <div id="debug-sessions"></div>
+      <div id="debug-body">
+        <div id="debug-meta"></div>
+        <div id="debug-log"></div>
+        <div class="debug-controls">
+          <input type="text" id="debug-input" placeholder="Tell the coding agent something…" />
+          <button id="debug-send" title="Send to the coding agent">Send</button>
+          <button id="debug-reload" class="hidden" title="The fix changed the page — reload to load it">Reload</button>
+          <button id="debug-end" title="Commit, push and close this debug session">End session</button>
+        </div>
       </div>
     </div>
   </div>

@@ -8,7 +8,7 @@ import { getCanvas } from './canvas.js';
 import { appendToOutput } from './output.js';
 import { executeAction } from './canvas-actions.js';
 import { captureForBugReport, noteVoiceTool } from './debug-capture.js';
-import { setDebugSession, getDebugSessionId } from './debug-panel.js';
+import { setDebugSession, getDebugSessionId, onDebugAttachRequest } from './debug-panel.js';
 
 let active = false;
 let ws = null;
@@ -452,6 +452,12 @@ function updateButton() {
 }
 
 export function initVoice() {
+  // Picking a different session in the debug panel re-points the live assistant
+  // at it too, so the panel and the voice conversation never disagree.
+  onDebugAttachRequest((sessionId) => {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'debug_attach', sessionId }));
+  });
+
   const btn = document.getElementById('voice-btn');
   if (!btn) return;
   btn.addEventListener('click', () => {

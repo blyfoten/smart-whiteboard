@@ -18,7 +18,7 @@ import { snapPointToShapes, toTargetLocal } from './edge-snap.js';
 import { suspend as historySuspend } from './history.js';
 import { appendToOutput } from './output.js';
 import {
-  cadApiSketchChain, cadApiSketchCircle, cadApiConstrain, cadApiDimension,
+  cadApiSketchChain, cadApiSketchCircle, cadApiSketchArc, cadApiConstrain, cadApiDimension,
   cadApiSetParam, cadApiDelete, cadApiSummary,
 } from './cad/cad-mode.js';
 
@@ -888,6 +888,14 @@ export async function executeAction(name, args = {}) {
       const c = pctToScene(canvas, args.cx, args.cy);
       const r = pctLen(canvas, num(args.radius, 5), 0).w;
       const res = cadApiSketchCircle(c.x, c.y, r);
+      return res.error ? { ok: false, message: res.error } : { ...res, radiusUnits: round1(r), ...cadStatusOf() };
+    }
+    case 'cad_sketch_arc': {
+      // Angles are absolute degrees on the y-down board, so they need no
+      // conversion — only the centre and radius are in board percent.
+      const c = pctToScene(canvas, args.cx, args.cy);
+      const r = pctLen(canvas, num(args.radius, 5), 0).w;
+      const res = cadApiSketchArc(c.x, c.y, r, num(args.startAngleDeg, 0), num(args.endAngleDeg, 90));
       return res.error ? { ok: false, message: res.error } : { ...res, radiusUnits: round1(r), ...cadStatusOf() };
     }
     case 'cad_get_sketch': {

@@ -18,6 +18,15 @@ let state = null;      // last publicState from the server
 let events = null;     // EventSource
 let lastEventAt = 0;
 let elements = null;
+let sessionList = [];  // headers for the picker, newest first
+let attachHook = null; // voice.js registers here so the assistant follows a switch
+
+// voice.js calls this so that picking a different session in the panel also
+// re-points the live assistant at it (the panel and the voice relay each hold
+// their own binding).
+export function onDebugAttachRequest(fn) {
+  attachHook = fn;
+}
 
 function el(id) {
   return document.getElementById(id);
@@ -36,6 +45,10 @@ function cacheElements() {
     endBtn: el('debug-end'),
     reloadBtn: el('debug-reload'),
     closeBtn: el('debug-collapse'),
+    listBtn: el('debug-list-toggle'),
+    list: el('debug-sessions'),
+    body: el('debug-body'),
+    hideBtn: el('debug-hide'),
   };
   return elements;
 }
@@ -84,20 +97,114 @@ function describe(event) {
   }
 }
 
+// ---- session picker (same shape as the boards panel: pick one, drop one) ----
+
+function ago(timestamp) {
+  const minutes = Math.round((Date.now() - timestamp) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
+}
+
+function renderSessionList() {
+  const e = cacheElements();
+  if (!e.list) return;
+  e.list.innerHTML = '';
+  if (!sessionList.length) {
+    const empty = document.createElement('div');
+    empty.className = 'debug-session-empty';
+    empty.textContent = 'No debug sessions yet — ask the assistant to fix something in the app.';
+    e.list.appendChild(empty);
+    return;
+  }
+  for (const session of sessionList) {
+    const row = document.createElement('div');
+    row.className = `debug-session-row${state && state.id === session.id ? ' active' : ''}`;
+    row.title = `${session.branch}\n${session.lastSummary || ''}`;
+
+    const label = document.createElement('span');
+    label.className = 'debug-session-label';
+    label.textContent = session.title || 'Untitled';
+    label.addEventListener('click', () => openSession(session.id));
+
+    const when = document.createElement('span');
+    when.className = 'debug-session-when';
+    when.textContent = `${session.status === 'working' ? '● ' : ''}${ago(session.createdAt)}`;
+
+    const del = document.createElement('button');
+    del.className = 'debug-session-del';
+    del.textContent = '✕';
+    del.title = 'Forget this session (its git branch is kept)';
+    del.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      deleteSession(session.id);
+    });
+
+    row.append(label, when, del);
+    e.list.appendChild(row);
+  }
+}
+
+async function refreshSessionList() {
+  try {
+    const res = await fetch('/debug/sessions');
+    const data = await res.json();
+    if (data.success) {
+      sessionList = data.sessions || [];
+      renderSessionList();
+    }
+  } catch (err) { /* debug mode is off, or the server is restarting */ }
+}
+
+// Switch the panel — and the live assistant — to another session.
+async function openSession(id) {
+  if (state && state.id === id) return;
+  closeEventStream();
+  lastEventAt = 0;
+  const { log } = cacheElements();
+  if (log) log.innerHTML = '';
+  await refreshState(id);
+  if (state && state.id === id) {
+    try { localStorage.setItem(STORAGE_KEY, id); } catch (e) { /* noop */ }
+    openEventStream(id);
+    if (attachHook) attachHook(id);
+    renderSessionList();
+  }
+}
+
+async function deleteSession(id) {
+  try {
+    const res = await fetch(`/debug/session/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!data.success) {
+      line(`⚠️ ${data.message || 'Could not forget that session.'}`, 'debug-error');
+      return;
+    }
+    if (state && state.id === id) setDebugSession(null);
+    await refreshSessionList();
+  } catch (err) {
+    line(`⚠️ ${err.message}`, 'debug-error');
+  }
+}
+
 function render() {
   const e = cacheElements();
   if (!e.panel) return;
-  if (!state) {
-    e.panel.classList.add('hidden');
+  const hasSession = !!state;
+  e.body.classList.toggle('hidden', !hasSession);
+  if (!hasSession) {
+    e.title.textContent = 'Debug sessions';
+    e.meta.textContent = '';
+    e.status.textContent = '';
+    e.status.className = 'debug-pill hidden';
     return;
   }
-  e.panel.classList.remove('hidden');
   e.title.textContent = state.title || 'Debug session';
   e.meta.textContent = `${state.branch} · ${state.model}` +
     (state.changedFiles.length ? ` · ${state.changedFiles.length} file(s)` : '') +
     (state.commits.length ? ` · ${state.commits.length} commit(s)` : '');
   e.status.textContent = state.status === 'working' ? 'working…' : state.status;
-  e.status.className = `debug-pill debug-${state.status}`;
   e.reloadBtn.classList.toggle('hidden', !state.needsReload);
   e.input.disabled = state.status === 'ended';
   e.sendBtn.disabled = state.status === 'ended';
@@ -158,14 +265,16 @@ export function setDebugSession(next) {
     closeEventStream();
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* noop */ }
     render();
+    refreshSessionList();
     return;
   }
   const isNew = !state || state.id !== next.id;
   state = next;
   if (isNew) {
     lastEventAt = 0;
-    const { log } = cacheElements();
+    const { log, panel } = cacheElements();
     if (log) log.innerHTML = '';
+    if (panel) panel.classList.remove('hidden'); // a new session opens the panel
     try { localStorage.setItem(STORAGE_KEY, next.id); } catch (e) { /* noop */ }
     appendToOutput(
       `<b>🛠️ Debug session started</b> — "${next.title}"<br>` +
@@ -175,6 +284,15 @@ export function setDebugSession(next) {
     openEventStream(next.id);
   }
   render();
+  refreshSessionList();
+}
+
+// The 🛠️ toolbar button: show/hide the panel (and its session list).
+export function toggleDebugPanel() {
+  const { panel } = cacheElements();
+  if (!panel) return;
+  const showing = panel.classList.toggle('hidden');
+  if (!showing) refreshSessionList();
 }
 
 // Voice mode asks for this the moment it reconnects, which can be before the
@@ -224,6 +342,27 @@ export function initDebugPanel() {
   const e = cacheElements();
   if (!e.panel) return;
 
+  // The 🛠️ button only appears where the coding agent can actually run.
+  const button = el('debug-btn');
+  fetch('/debug/status')
+    .then((res) => res.json())
+    .then((data) => {
+      if (!data.enabled) return;
+      if (button) {
+        button.classList.remove('hidden');
+        button.addEventListener('click', toggleDebugPanel);
+      }
+      sessionList = data.sessions || [];
+      renderSessionList();
+    })
+    .catch(() => { /* older server, or debug routes absent */ });
+
+  e.listBtn.addEventListener('click', () => {
+    const showing = e.list.classList.toggle('hidden');
+    e.listBtn.textContent = showing ? '▸ Sessions' : '▾ Sessions';
+    if (!showing) refreshSessionList();
+  });
+
   e.sendBtn.addEventListener('click', sendMessage);
   e.input.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && !ev.shiftKey) {
@@ -235,6 +374,10 @@ export function initDebugPanel() {
   e.endBtn.addEventListener('click', endSession);
   e.reloadBtn.addEventListener('click', () => location.reload());
   e.closeBtn.addEventListener('click', () => e.panel.classList.toggle('collapsed'));
+  e.hideBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation(); // the header itself collapses; this closes the panel
+    e.panel.classList.add('hidden');
+  });
 
   // A session that outlived a page reload (the agent's own fix usually causes
   // one) picks itself back up here.
@@ -246,7 +389,9 @@ export function initDebugPanel() {
       .then((data) => {
         if (data.success && data.session && data.session.status !== 'ended') {
           state = data.session;
+          e.panel.classList.remove('hidden'); // work still in flight — show it
           render();
+          renderSessionList();
           openEventStream(data.session.id);
         } else {
           try { localStorage.removeItem(STORAGE_KEY); } catch (err) { /* noop */ }

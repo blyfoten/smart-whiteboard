@@ -34,15 +34,29 @@ function isConfigured() {
     return !!client;
 }
 
-// The repo documents itself in CLAUDE.md; hand that to the agent instead of
-// duplicating an architecture summary here that would drift out of date.
-function projectBrief() {
+// The repo documents itself; hand that to the agent instead of duplicating an
+// architecture summary here that would drift out of date.
+//
+// AGENTS.md goes in WHOLE and first — it carries this agent's own operating
+// rules (the pre-commit checklist, the three-places-to-wire-a-voice-tool trap).
+// CLAUDE.md is the architecture map and is much longer, so it is the one that
+// gets capped, and the cap is announced rather than silently swallowing the end
+// of the file.
+function readDoc(name, limit) {
+    let text;
     try {
-        const text = fs.readFileSync(path.join(workspace.REPO_ROOT, 'CLAUDE.md'), 'utf8');
-        return text.slice(0, 14000);
+        text = fs.readFileSync(path.join(workspace.REPO_ROOT, name), 'utf8');
     } catch (e) {
-        return '(CLAUDE.md not found — explore the repository with list_files.)';
+        return `(${name} not found.)`;
     }
+    if (text.length <= limit) return text;
+    return text.slice(0, limit) +
+        `\n\n… [${name} truncated here — read the rest with read_file if you need it.]`;
+}
+
+function projectBrief() {
+    return `--- AGENT INSTRUCTIONS (AGENTS.md) ---\n${readDoc('AGENTS.md', 12000)}\n\n` +
+        `--- ARCHITECTURE MAP (CLAUDE.md) ---\n${readDoc('CLAUDE.md', 20000)}`;
 }
 
 function systemPrompt(session) {
@@ -66,7 +80,8 @@ If the user's next message changes the task, follow it — the conversation cont
 
 Keep the whole exchange short and factual. You are talking to someone standing at a whiteboard, not writing a report.
 
---- PROJECT DOCUMENTATION (CLAUDE.md) ---
+The project's own documentation follows. AGENTS.md has a section addressed to YOU ("The online code agent") with a pre-commit checklist — follow it; it exists because of mistakes made on earlier sessions.
+
 ${projectBrief()}`;
 }
 

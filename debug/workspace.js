@@ -281,14 +281,33 @@ async function isDirty() {
     return !!(await gitText(['status', '--porcelain']));
 }
 
-async function createBranch(name) {
-    const res = await git(['checkout', '-b', name]);
+// Create (or switch to) a branch. `from` pins the starting point — without it
+// git branches from whatever is checked out, so a second debug session would
+// inherit the first session's commits instead of starting clean.
+async function createBranch(name, from) {
+    const res = await git(from ? ['checkout', '-b', name, from] : ['checkout', '-b', name]);
     if (!res.ok) {
         // Already exists (e.g. a resumed session) — just switch to it.
         const sw = await git(['checkout', name]);
         if (!sw.ok) throw new WorkspaceError(`Could not create or switch to branch ${name}: ${res.stderr || res.error}`);
     }
     return name;
+}
+
+// How many commits on `branch` are not on origin/<branch>. -1 means the branch
+// has never been pushed, so everything on it is unpushed.
+async function unpushedCount(branch) {
+    const exists = await git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]);
+    if (!exists.ok) return -1;
+    const count = await gitText(['rev-list', '--count', `origin/${branch}..${branch}`]);
+    return Number(count) || 0;
+}
+
+// Does this branch carry commits the base branch does not? Used to tell an
+// abandoned-but-empty debug branch from one holding real work.
+async function commitsAhead(branch, base) {
+    const count = await gitText(['rev-list', '--count', `${base}..${branch}`]);
+    return Number(count) || 0;
 }
 
 async function status() {
@@ -360,6 +379,8 @@ module.exports = {
     headCommit,
     isDirty,
     createBranch,
+    unpushedCount,
+    commitsAhead,
     status,
     diff,
     commitAll,

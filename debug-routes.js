@@ -57,15 +57,28 @@ function attachDebugRoutes(app, { limiter } = {}) {
         return session;
     };
 
-    // Whether the UI should offer debug mode at all.
+    // Whether the UI should offer debug mode at all. Session headers come along
+    // when the caller is allowed to see them, so the panel can render its picker
+    // in one round trip.
     app.get('/debug/status', (req, res) => {
         res.json({
             success: true,
             enabled: available(),
             reason: unavailableReason(),
             requiresToken: !!process.env.DEBUG_AGENT_TOKEN,
-            sessions: available() ? sessions.list() : [],
+            sessions: available() && tokenOk(req) ? sessions.list() : [],
         });
+    });
+
+    // Every session this server knows about, live or left on disk — the picker.
+    app.get('/debug/sessions', guard, (req, res) => {
+        res.json({ success: true, sessions: sessions.list() });
+    });
+
+    // Forget a session (its branch is kept — the work on it is the point).
+    app.delete('/debug/session/:id', guard, (req, res) => {
+        const result = sessions.remove(req.params.id);
+        res.status(result.ok ? 200 : 409).json({ success: result.ok, ...result });
     });
 
     app.post('/debug/session', limit, guard, async (req, res) => {
