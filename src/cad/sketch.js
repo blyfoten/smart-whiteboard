@@ -1,10 +1,16 @@
 // src/cad/sketch.js — the parametric 2D sketch model (no Fabric, no DOM).
 //
 // A Sketch is the CAD-mode source of truth: points, entities that reference
-// them (lines by endpoint ids, circles by a centre id + radius), constraints,
+// them (lines by endpoint ids, circles/arcs by a centre id + radius), constraints,
 // and named parameters. Fabric objects in cad-mode.js are just a rendering of
 // this model; the solver (solver.js) mutates point coords / radii to satisfy
 // the constraints. Kept pure so it can be unit-tested in Node.
+//
+// An arc is a circle's centre + radius plus a fixed start/end angle (radians,
+// standard atan2 convention on this y-down canvas): { id, type:'arc', c, r,
+// startAngle, endAngle }. The angles aren't solver variables — only the centre
+// and radius move — so an arc behaves exactly like a circle for dragging,
+// 'equal' and the 'radius' dimension (both accept a circle or an arc id).
 //
 // Constraint types and their references:
 //   { type: 'horizontal',    line }
@@ -48,6 +54,9 @@ export class Sketch {
   constraint(id) { return this.constraints.find((c) => c.id === id) || null; }
   lines() { return this.entities.filter((e) => e.type === 'line'); }
   circles() { return this.entities.filter((e) => e.type === 'circle'); }
+  arcs() { return this.entities.filter((e) => e.type === 'arc'); }
+  // Entities with a radius variable — circles and arcs alike.
+  radiused() { return this.entities.filter((e) => e.type === 'circle' || e.type === 'arc'); }
 
   // --- construction ---
 
@@ -86,6 +95,13 @@ export class Sketch {
   addCircle(cx, cy, r) {
     const c = this.addPoint(cx, cy);
     const e = { id: this._id('c'), type: 'circle', c: c.id, r };
+    this.entities.push(e);
+    return e;
+  }
+
+  addArc(cx, cy, r, startAngle, endAngle) {
+    const c = this.addPoint(cx, cy);
+    const e = { id: this._id('a'), type: 'arc', c: c.id, r, startAngle, endAngle };
     this.entities.push(e);
     return e;
   }
@@ -218,7 +234,7 @@ export class Sketch {
   // equations the constraints contribute. Negative means over-constrained
   // (redundant/conflicting) — the solver's residual tells which.
   degreesOfFreedom() {
-    const vars = this.points.length * 2 + this.circles().length;
+    const vars = this.points.length * 2 + this.radiused().length;
     let eqs = 0;
     for (const c of this.constraints) eqs += EQUATION_COUNT[c.type] || 0;
     return vars - eqs;

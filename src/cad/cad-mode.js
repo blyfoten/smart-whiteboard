@@ -19,7 +19,7 @@
 // (the "stray dot" a tap leaves) selects entities/dimensions for the toolbar's
 // constraint buttons. Point-dragging happens in Select mode (or held Space).
 
-import { Line as FabricLine, Circle as FabricCircle, FabricText } from 'fabric';
+import { Line as FabricLine, Circle as FabricCircle, Path as FabricPath, FabricText } from 'fabric';
 import { classifyStroke, pathToPoints, MIN_SIZE } from '../shape-classifier.js';
 import { pointerSlop } from '../pointer.js';
 import { Sketch } from './sketch.js';
@@ -182,6 +182,40 @@ function isPointFixed(pointId) {
   return _sketch.constraints.some((c) => c.type === 'fix' && c.point === pointId);
 }
 
+// An SVG arc-path "d" string for a circular arc around (cx, cy), rendered as
+// a single stroked segment (same convention as shapes.js's freehand arcs).
+function arcPathD(cx, cy, r, startAngle, endAngle) {
+  const x1 = cx + r * Math.cos(startAngle);
+  const y1 = cy + r * Math.sin(startAngle);
+  const x2 = cx + r * Math.cos(endAngle);
+  const y2 = cy + r * Math.sin(endAngle);
+  const sweep = endAngle - startAngle;
+  const largeArc = Math.abs(sweep) > Math.PI ? 1 : 0;
+  const sweepFlag = sweep > 0 ? 1 : 0;
+  return `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} ${sweepFlag} ${x2} ${y2}`;
+}
+
+// Wrap `a` (radians) to (-PI, PI].
+function wrapAngle(a) {
+  a = a % (2 * Math.PI);
+  if (a > Math.PI) a -= 2 * Math.PI;
+  if (a <= -Math.PI) a += 2 * Math.PI;
+  return a;
+}
+
+// Is `theta` (radians) within the arc's sweep from startAngle to endAngle,
+// travelling in whichever direction that sweep actually goes?
+function angleInArc(theta, startAngle, endAngle) {
+  const sweep = endAngle - startAngle;
+  let d = wrapAngle(theta - startAngle);
+  if (sweep >= 0) {
+    if (d < 0) d += 2 * Math.PI;
+    return d <= sweep + 1e-6;
+  }
+  if (d > 0) d -= 2 * Math.PI;
+  return d >= sweep - 1e-6;
+}
+
 // Small H/V letters at a constrained line's midpoint — enough feedback to see
 // which segments are locked without a full constraint-glyph system.
 function lineGlyphs(lineId) {
@@ -226,6 +260,13 @@ function buildObjects(skipPoints) {
       out.push(new FabricCircle(baseProps('entity', e.id, {
         left: ctr.x, top: ctr.y, originX: 'center', originY: 'center',
         radius: Math.max(1, e.r), fill: '', stroke, strokeWidth: 2,
+      })));
+    } else if (e.type === 'arc') {
+      const ctr = _sketch.point(e.c);
+      if (!ctr) continue;
+      const d = arcPathD(ctr.x, ctr.y, Math.max(1, e.r), e.startAngle, e.endAngle);
+      out.push(new FabricPath(d, baseProps('entity', e.id, {
+        stroke, strokeWidth: 2, fill: '', strokeLineCap: 'round',
       })));
     }
   }
@@ -378,8 +419,11 @@ export function cadHandleStroke(path) {
       break;
     }
     case 'circle':
-    case 'ellipse': // sketches are circles-only; an ellipse becomes its mean circle
+    case 'ellipse': // an ellipse becomes its mean circle (sketches have no ellipse entity)
       _sketch.addCircle(desc.cx, desc.cy, (desc.rx + desc.ry) / 2);
+      break;
+    case 'arc':
+      _sketch.addArc(desc.cx, desc.cy, desc.r, desc.startAngle, desc.endAngle);
       break;
     default:
       return;
@@ -427,6 +471,12 @@ function hitTest(x, y, slop = 0) {
   for (const e of _sketch.circles()) {
     const ctr = _sketch.point(e.c);
     if (ctr) {
+      consider({ kind: 'entity', id: e.id }, Math.abs(Math.hypot(ctr.x - x, ctr.y - y) - e.r), radius(HIT_EDGE));
+    }
+  }
+  for (const e of _sketch.arcs()) {
+    const ctr = _sketch.point(e.c);
+    if (ctr && angleInArc(Math.atan2(y - ctr.y, x - ctr.x), e.startAngle, e.endAngle)) {
       consider({ kind: 'entity', id: e.id }, Math.abs(Math.hypot(ctr.x - x, ctr.y - y) - e.r), radius(HIT_EDGE));
     }
   }
@@ -491,11 +541,13 @@ function selectedLines() {
     .filter((e) => e && e.type === 'line');
 }
 
+// Named "circles" for historical reasons but covers both circles and arcs —
+// they share a centre + radius and behave identically for equal/radius dims.
 function selectedCircles() {
   return _selection
     .filter((s) => s.kind === 'entity')
     .map((s) => _sketch.entity(s.id))
-    .filter((e) => e && e.type === 'circle');
+    .filter((e) => e && (e.type === 'circle' || e.type === 'arc'));
 }
 
 function selectedPoints() {
@@ -815,6 +867,17 @@ export function cadApiSketchCircle(cx, cy, r) {
   return { ok: true, id: c.id, centerPointId: c.c };
 }
 
+// startAngleDeg/endAngleDeg are measured the same way as the on-canvas
+// coordinate grid: 0° = +x, 90° = +y (down), sweeping from start to end.
+export function cadApiSketchArc(cx, cy, r, startAngleDeg, endAngleDeg) {
+  const before = _sketch.toJSON();
+  const startAngle = (Number(startAngleDeg) * Math.PI) / 180;
+  const endAngle = (Number(endAngleDeg) * Math.PI) / 180;
+  const e = _sketch.addArc(Number(cx), Number(cy), Math.max(1, Number(r)), startAngle, endAngle);
+  commit(before);
+  return { ok: true, id: e.id, centerPointId: e.c };
+}
+
 // Apply a constraint by ids. Returns null on success or a reason string.
 export function cadApiConstrain(type, entityIds, pointIds) {
   const sel = resolveRefs(entityIds, pointIds);
@@ -905,6 +968,12 @@ export function cadApiSummary() {
       };
     }
     const ctr = _sketch.point(e.c);
+    if (e.type === 'arc') {
+      return {
+        id: e.id, type: 'arc', centerPointId: e.c, center: { x: ctr.x, y: ctr.y }, radius: e.r,
+        startAngleDeg: (e.startAngle * 180) / Math.PI, endAngleDeg: (e.endAngle * 180) / Math.PI,
+      };
+    }
     return { id: e.id, type: 'circle', centerPointId: e.c, center: { x: ctr.x, y: ctr.y }, radius: e.r };
   });
   const constraints = _sketch.constraints.map((c) => {

@@ -37,7 +37,7 @@ function buildSystem(sketch, pins, dimValues) {
     addVar(`px:${p.id}`, p.x);
     addVar(`py:${p.id}`, p.y);
   }
-  for (const c of sketch.circles()) addVar(`r:${c.id}`, c.r);
+  for (const c of sketch.radiused()) addVar(`r:${c.id}`, c.r);
 
   const ix = (key) => varIndex.get(key);
   const px = (x, id) => x[ix(`px:${id}`)];
@@ -96,7 +96,7 @@ function buildSystem(sketch, pins, dimValues) {
             const b = dir(x, eb);
             return Math.hypot(a.dx, a.dy) - Math.hypot(b.dx, b.dy);
           }, WEIGHT.constraint);
-        } else if (ea && eb && ea.type === 'circle' && eb.type === 'circle') {
+        } else if (ea && eb && ea.type !== 'line' && eb.type !== 'line') {
           add((x) => rad(x, ea.id) - rad(x, eb.id), WEIGHT.constraint);
         }
         break;
@@ -285,7 +285,7 @@ function runGaussNewton(sketch, pins, dimValues) {
     p.x = x[varIndex.get(`px:${p.id}`)];
     p.y = x[varIndex.get(`py:${p.id}`)];
   }
-  for (const c of sketch.circles()) {
+  for (const c of sketch.radiused()) {
     c.r = Math.max(MIN_RADIUS, x[varIndex.get(`r:${c.id}`)]);
   }
 
