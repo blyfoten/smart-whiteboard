@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const report = require('../debug/bug-report.js');
 const workspace = require('../debug/workspace.js');
 const agent = require('../debug/agent.js');
+const sessions = require('../debug/sessions.js');
 
 let passed = 0;
 function check(name, fn) {
@@ -195,6 +196,59 @@ await checkAsync('agent tools read the repo and report back', async () => {
   assert.equal(spoken.meta.spoken, 'on it', 'notify_user carries the sentence to the voice channel');
   const unknown = await agent.executeTool('rm_rf', {}, session);
   assert.ok(unknown.content.includes('Unknown tool'));
+});
+
+// ---- session store (what the panel's picker lists) --------------------------
+
+check('sessions.list reads headers left on disk, and remove clears them', () => {
+  const store = sessions.STORE_DIR;
+  const id = 'dbg_test_' + Date.now().toString(36);
+  const meta = {
+    id,
+    title: 'A session from an earlier run',
+    branch: 'debug/from-earlier-0101-0000',
+    baseBranch: 'main',
+    status: 'working', // as if the server died mid-turn
+    createdAt: Date.now() - 5000,
+    changedFiles: [],
+    commits: [],
+  };
+  const existed = fs.existsSync(store);
+  fs.mkdirSync(store, { recursive: true });
+  const metaFile = path.join(store, `${id}.meta.json`);
+  const bodyFile = path.join(store, `${id}.json`);
+  try {
+    fs.writeFileSync(metaFile, JSON.stringify(meta));
+    fs.writeFileSync(bodyFile, JSON.stringify({ id, messages: [] }));
+
+    const listed = sessions.list().find((s) => s.id === id);
+    assert.ok(listed, 'a persisted session shows up in the list');
+    assert.equal(listed.status, 'idle', 'a session cut off mid-turn is not still "working"');
+    assert.equal(listed.title, meta.title);
+
+    assert.equal(sessions.remove(id).ok, true);
+    assert.ok(!fs.existsSync(metaFile) && !fs.existsSync(bodyFile), 'both files are deleted');
+    assert.ok(!sessions.list().some((s) => s.id === id), 'and it leaves the list');
+  } finally {
+    fs.rmSync(metaFile, { force: true });
+    fs.rmSync(bodyFile, { force: true });
+    if (!existed) fs.rmSync(store, { recursive: true, force: true });
+  }
+});
+
+check('sessions.list survives a corrupt header', () => {
+  const store = sessions.STORE_DIR;
+  const existed = fs.existsSync(store);
+  fs.mkdirSync(store, { recursive: true });
+  const bad = path.join(store, 'dbg_corrupt_test.meta.json');
+  try {
+    fs.writeFileSync(bad, '{ not json at all');
+    assert.doesNotThrow(() => sessions.list());
+    assert.ok(!sessions.list().some((s) => s && s.id === 'dbg_corrupt_test'));
+  } finally {
+    fs.rmSync(bad, { force: true });
+    if (!existed) fs.rmSync(store, { recursive: true, force: true });
+  }
 });
 
 check('truncate caps tool output', () => {

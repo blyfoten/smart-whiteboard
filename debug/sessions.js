@@ -182,7 +182,7 @@ async function create({ report: rawReport, context, screenshot } = {}) {
     // mistake someone else's edits for its own.
     const dirty = await workspace.isDirty();
     const branch = branchNameFor(report, new Date());
-    await workspace.createBranch(branch);
+    await workspace.createBranch(branch, baseBranch);
     const commit = await workspace.headCommit();
 
     const image = imageBlock(screenshot);

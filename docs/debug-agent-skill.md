@@ -75,6 +75,12 @@ the sandbox in `debug/workspace.js`:
 `run_task` (`test` \| `build` \| `install`) · `git_diff` · `commit_and_push` ·
 `notify_user` · `finish`
 
+Its instructions are the repo's own: **`AGENTS.md` is loaded whole** into the
+system prompt (then `CLAUDE.md`, capped), and its "The online code agent"
+section carries the pre-commit checklist — rebuild after `src/` edits, run the
+tests, wire a new voice tool in all three places, read your own diff. That
+section is where a newly-discovered trap should be written down.
+
 Constraints that are enforced in code, not in the prompt:
 
 - **No shell.** Commands are `execFile` with fixed argument arrays; the only
@@ -116,16 +122,34 @@ The same session is reachable over HTTP, so the feature is usable with voice off
 and testable without a microphone:
 
 ```
-GET  /debug/status                     # enabled? which sessions exist?
-POST /debug/session                    # { report, context, screenshot } -> session
-GET  /debug/session/:id                # state + events since ?since=
-GET  /debug/session/:id/events         # SSE stream of agent activity
-POST /debug/session/:id/message        # { text }
-POST /debug/session/:id/cancel         # stop after the current step
-POST /debug/session/:id/end            # { push } commit, push, close
+GET    /debug/status                   # enabled? which sessions exist?
+GET    /debug/sessions                 # every session, live or left on disk
+POST   /debug/session                  # { report, context, screenshot } -> session
+GET    /debug/session/:id              # state + events since ?since=
+GET    /debug/session/:id/events       # SSE stream of agent activity
+POST   /debug/session/:id/message      # { text }
+POST   /debug/session/:id/cancel       # stop after the current step
+POST   /debug/session/:id/end          # { push } commit, push, close
+DELETE /debug/session/:id              # forget it (the git branch is kept)
 ```
 
-The panel's text box uses exactly these.
+The panel's text box and its session picker use exactly these.
+
+## One session per branch, and no orphans
+
+Sessions are listed in the panel the way boards are — newest first, live status,
+click to switch, ✕ to forget. Two rules keep that list honest:
+
+- A new session branches from the base its **predecessor** started from, not from
+  whatever happens to be checked out. Without this, a second session opened while
+  the first still had unpushed commits would branch on top of them, carry them
+  under its own name, and leave the first branch stranded at its base.
+- Before leaving a branch behind, anything unpushed on it is pushed. Work the
+  agent committed is never left only on the deployment's disk.
+
+Switching session in the picker also re-points the live voice assistant at it
+(`debug_attach`), so the panel and the conversation never disagree about which
+bug is being worked on.
 
 ## Turning it on
 
