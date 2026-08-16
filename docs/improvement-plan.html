@@ -183,7 +183,7 @@
     one-shot <code>webkitSpeechRecognition</code> (hardcoded to <code>sv-SE</code>). Larger, separate workstream from §1.
   </p>
   <div class="qbox" style="border-left-color:var(--green); background:rgba(74,222,128,0.07)">
-    ✅ <strong>First end-to-end slice on this branch.</strong> Server-side WebSocket relay (<code>voice-server.js</code>, key stays server-side) to a Gemini Live session, and a client <code>src/voice.js</code> behind a 🎤 Voice toggle that streams 16kHz mic PCM + ~1fps whiteboard JPEG frames and plays back 24kHz audio replies; transcripts go to the output panel. <strong>⚠️ Requires HTTPS</strong> (mic blocked on plain http). Live model is <code>GEMINI_LIVE_MODEL</code> (default <code>gemini-live-2.5-flash-native-audio</code>).
+    ✅ <strong>First end-to-end slice on this branch.</strong> Server-side WebSocket relay (<code>voice-server.js</code>, key stays server-side) to a Gemini Live session, and a client <code>src/voice.js</code> behind a 🎤 Voice toggle that streams 16kHz mic PCM + ~1fps whiteboard JPEG frames and plays back 24kHz audio replies; transcripts go to the output panel. <strong>⚠️ Requires HTTPS</strong> (mic blocked on plain http). Live model is <code>GEMINI_LIVE_MODEL</code> (default: a fallback chain headed by <code>gemini-3.1-flash-live-preview</code>).
   </div>
 
   <div class="card">
@@ -282,10 +282,11 @@
   <table>
     <thead><tr><th>Provider</th><th>In code today</th><th>Status</th><th>Suggested target</th></tr></thead>
     <tbody>
-      <tr><td>Google Gemini</td><td class="good">gemini-2.5-flash ✓</td><td class="good">Fixed (was 404)</td><td>GEMINI_MODEL env-overridable</td></tr>
-      <tr><td>OpenAI (vision)</td><td class="good">gpt-5.4 ✓</td><td class="good">Refreshed, official SDK</td><td>OPENAI_VISION_MODEL env</td></tr>
-      <tr><td>OpenAI (solve)</td><td class="good">gpt-5.4 ✓</td><td class="good">Refreshed, official SDK</td><td>OPENAI_SOLVE_MODEL env</td></tr>
-      <tr><td>Anthropic Claude</td><td class="good">claude-haiku-4-5 ✓</td><td class="good">Added (3rd provider)</td><td>CLAUDE_VISION_MODEL env</td></tr>
+      <tr><td>Google Gemini</td><td class="good">gemini-3.7-flash ✓</td><td class="good">Current gen (cheaper than 2.5/3.6 Flash)</td><td>GEMINI_MODEL env-overridable</td></tr>
+      <tr><td>OpenAI (vision)</td><td class="good">gpt-5.6-terra ✓</td><td class="good">Current gen (sol / terra / luna tiers)</td><td>OPENAI_VISION_MODEL env</td></tr>
+      <tr><td>OpenAI (solve)</td><td class="good">gpt-5.6-terra ✓</td><td class="good">Current gen (sol / terra / luna tiers)</td><td>OPENAI_SOLVE_MODEL env</td></tr>
+      <tr><td>Anthropic Claude</td><td class="good">claude-sonnet-5 ✓</td><td class="good">Current gen (Claude 5 family)</td><td>CLAUDE_VISION_MODEL env</td></tr>
+      <tr><td>Gemini Live (voice)</td><td class="good">gemini-3.1-flash-live-preview ✓</td><td class="good">Newest live model; chain falls back</td><td>GEMINI_LIVE_MODEL env</td></tr>
       
     </tbody>
   </table>

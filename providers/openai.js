@@ -1,9 +1,12 @@
 // providers/openai.js — OpenAI vision extract + text solve via the official SDK.
 //
-// Model IDs are env-overridable. If a default ever 404s (model renamed/retired),
-// set OPENAI_VISION_MODEL / OPENAI_SOLVE_MODEL rather than editing code.
+// The caller passes the model id to use (the server resolves it from the
+// selected tier — see providers/catalogue.js, where the GPT-5.6 ladder is
+// luna → terra → sol). Falls back to the catalogue's default tier when called
+// without one, so direct use still works.
 
 const { SYSTEM_PROMPT, EXTRACT_USER_PROMPT } = require('./schema');
+const { resolveModel } = require('./catalogue');
 
 // Guard the SDK require so a not-yet-installed package disables this provider
 // rather than crashing the whole server (the git watcher pulls but doesn't
@@ -15,9 +18,6 @@ try {
     console.warn('⚠️  `openai` package not installed — OpenAI provider disabled. Run `npm install`.');
 }
 
-const VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-5.4';
-const SOLVE_MODEL = process.env.OPENAI_SOLVE_MODEL || 'gpt-5.4';
-
 const client = OpenAI && process.env.OPENAI_API_KEY
     ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
     : null;
@@ -27,9 +27,9 @@ module.exports = {
     isConfigured: () => !!client,
 
     // Returns the parsed JSON object (may contain { error }); throws on API/parse failure.
-    async extract(image) {
+    async extract(image, model) {
         const resp = await client.chat.completions.create({
-            model: VISION_MODEL,
+            model: model || resolveModel('gpt', null, 'vision'),
             response_format: { type: 'json_object' },
             messages: [
                 { role: 'system', content: SYSTEM_PROMPT },
@@ -46,9 +46,9 @@ module.exports = {
         return JSON.parse(content);
     },
 
-    async solve(equation) {
+    async solve(equation, model) {
         const resp = await client.chat.completions.create({
-            model: SOLVE_MODEL,
+            model: model || resolveModel('gpt', null, 'solve'),
             messages: [
                 { role: 'system', content: 'You are a mathematical assistant.' },
                 { role: 'user', content: `Solve the equation: ${equation}` },

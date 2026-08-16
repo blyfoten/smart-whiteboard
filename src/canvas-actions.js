@@ -512,8 +512,19 @@ export async function executeAction(name, args = {}) {
     case 'move_object': {
       const o = resolveTarget(canvas, args);
       if (!o) return { ok: false, message: 'shape not found' };
-      const d = pctLen(canvas, args.dx, args.dy);
-      o.set({ left: o.left + d.w, top: o.top + d.h });
+      // Absolute placement (toCx,toCy = where the CENTRE should land) beats
+      // relative dx,dy for layout work: rearranging a diagram means "put this
+      // box at 30,20", and making the agent difference that against the
+      // current position itself is a needless source of drift.
+      if (args.toCx != null || args.toCy != null) {
+        const r = o.getBoundingRect();
+        const now = sceneToPct(canvas, r.left + r.width / 2, r.top + r.height / 2);
+        const d = pctLen(canvas, num(args.toCx, now.x) - now.x, num(args.toCy, now.y) - now.y);
+        o.set({ left: o.left + d.w, top: o.top + d.h });
+      } else {
+        const d = pctLen(canvas, args.dx, args.dy);
+        o.set({ left: o.left + d.w, top: o.top + d.h });
+      }
       o.setCoords();
       canvas.requestRenderAll();
       return { ok: true, id: ensureId(o), bbox: bboxPct(canvas, o) };

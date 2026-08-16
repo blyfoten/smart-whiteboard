@@ -2,7 +2,7 @@
 
 import { getCanvas, cropObjects } from './canvas.js';
 import { IText, Textbox } from 'fabric';
-import { getCurrentModel } from './ui.js';
+import { getCurrentModel, getCurrentTier } from './ui.js';
 import { renderGraph } from './graph.js';
 import { appendToOutput } from './output.js';
 import { showEquationMenu, hideEquationMenu } from './equation-menu.js';
@@ -92,7 +92,7 @@ export function solveEquationFromText(equation, modelOverride) {
   fetch('/solve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ equation, model }),
+    body: JSON.stringify({ equation, model, tier: getCurrentTier() }),
   })
     .then(r => r.json())
     .then(data => {
@@ -166,7 +166,7 @@ export async function solveToBoard(instruction, model, anchor, heading) {
     const resp = await fetch('/solve', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ equation: instruction, model }),
+      body: JSON.stringify({ equation: instruction, model, tier: getCurrentTier() }),
     });
     const data = await resp.json();
     const ok = !!data.success;
@@ -324,7 +324,7 @@ async function runExtraction(canvas, inkObjects, model) {
     const response = await fetch('/extract', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: croppedDataURL, provider }),
+      body: JSON.stringify({ image: croppedDataURL, provider, tier: getCurrentTier() }),
     });
     const data = await response.json();
     if (!data.success) {
