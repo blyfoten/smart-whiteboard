@@ -466,11 +466,114 @@ function detectArrow(pts) {
   return { a, b: tip };
 }
 
+// Fit a circle to points via the algebraic (Kåsa) least-squares method:
+// x²+y² = A·x + B·y + C, linear in (A, B, C) with A=2cx, B=2cy, C=r²-cx²-cy².
+// Returns { cx, cy, r } or null if the system is degenerate (near-collinear).
+function fitCircleAlgebraic(pts) {
+  let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0, sz = 0;
+  const n = pts.length;
+  for (const p of pts) {
+    const { x, y } = p;
+    const z = x * x + y * y;
+    sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
+    sxz += x * z; syz += y * z; sz += z;
+  }
+  // Solve [[sxx,sxy,sx],[sxy,syy,sy],[sx,sy,n]] · [A,B,C]ᵀ = [sxz,syz,sz]ᵀ
+  // via Gaussian elimination with partial pivoting.
+  const m = [
+    [sxx, sxy, sx, sxz],
+    [sxy, syy, sy, syz],
+    [sx, sy, n, sz],
+  ];
+  for (let col = 0; col < 3; col++) {
+    let piv = col;
+    for (let r = col + 1; r < 3; r++) if (Math.abs(m[r][col]) > Math.abs(m[piv][col])) piv = r;
+    if (Math.abs(m[piv][col]) < 1e-9) return null;
+    [m[col], m[piv]] = [m[piv], m[col]];
+    for (let r = 0; r < 3; r++) {
+      if (r === col) continue;
+      const factor = m[r][col] / m[col][col];
+      for (let c = col; c < 4; c++) m[r][c] -= factor * m[col][c];
+    }
+  }
+  const A = m[0][3] / m[0][0];
+  const B = m[1][3] / m[1][1];
+  const C = m[2][3] / m[2][2];
+  const cx = A / 2;
+  const cy = B / 2;
+  const r2 = C + cx * cx + cy * cy;
+  if (!(r2 > 0)) return null;
+  return { cx, cy, r: Math.sqrt(r2) };
+}
+
+const MIN_ARC_SWEEP = (18 * Math.PI) / 180;   // below this, indistinguishable from a straight/bent line
+const MAX_ARC_SWEEP = (345 * Math.PI) / 180;  // near a full circle → the closed path already handled that
+const ARC_CORNER_TH = (45 * Math.PI) / 180;   // a single turn sharper than this is a corner, not a curve
+
+// Largest turn angle over a short arc-length window, on an evenly-resampled
+// stroke — a real corner (L/U-shape) shows up as one big spike even when a
+// whole-stroke circle fit happens to pass close to the same points.
+function maxLocalTurn(rs, k) {
+  let max = 0;
+  for (let i = k; i < rs.length - k; i++) {
+    const a = rs[i - k], b = rs[i], c = rs[i + k];
+    const t = angleTurn(b.x - a.x, b.y - a.y, c.x - b.x, c.y - b.y);
+    if (t > max) max = t;
+  }
+  return max;
+}
+
+// An open, continuously-curving stroke that hugs a single circle → a clean
+// circular arc, or null. Distinguished from a polyline's curve guard (which
+// only rejects) by actually fitting a circle and checking the residual, plus a
+// monotonic-sweep check so a wobbly back-and-forth scribble doesn't qualify,
+// and a local-turn check so a sharp corner never passes as a smooth arc.
+function detectArc(pts, bb) {
+  const diag = Math.hypot(bb.w, bb.h);
+  const rs = resample(pts, Math.min(40, pts.length));
+  if (maxLocalTurn(rs, 3) > ARC_CORNER_TH) return null; // a real corner, not a curve
+
+  const fit = fitCircleAlgebraic(rs);
+  if (!fit) return null;
+  const { cx, cy, r } = fit;
+  if (r < MIN_SIZE / 2 || r > 8 * diag) return null; // too small, or basically flat
+
+  let dev = 0;
+  for (const p of pts) dev += Math.abs(dist(p, { x: cx, y: cy }) - r);
+  dev /= pts.length;
+  // Absolute tolerance scaled to the stroke's own size (not to the fitted
+  // radius): a large-radius fit through an angular L/U-shape can otherwise
+  // look deceptively tight relative to its own (inflated) radius.
+  if (dev > 0.05 * diag + 3) return null; // doesn't hug a single circle closely enough
+
+  // Walk the stroke's angle around the fitted center, unwrapping continuously,
+  // to get the total signed sweep and confirm it doesn't double back on itself.
+  let angle = Math.atan2(pts[0].y - cy, pts[0].x - cx);
+  const startAngle = angle;
+  let sumAbsDelta = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a2 = Math.atan2(pts[i].y - cy, pts[i].x - cx);
+    // shortest signed step from the previous unwrapped angle
+    let d = a2 - angle;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    angle += d;
+    sumAbsDelta += Math.abs(d);
+  }
+  const sweep = angle - startAngle;
+  const absSweep = Math.abs(sweep);
+  if (absSweep < MIN_ARC_SWEEP || absSweep > MAX_ARC_SWEEP) return null;
+  if (sumAbsDelta > absSweep * 1.15 + 0.05) return null; // backtracked → not a clean arc
+
+  return { type: 'arc', cx, cy, r, startAngle, endAngle: startAngle + sweep };
+}
+
 // classifyStroke(points) -> descriptor | null
 //   { type: 'line',     a, b }
 //   { type: 'polyline', points: [{x,y}, ...] }   (open)
 //   { type: 'polygon',  points: [{x,y}, ...] }   (closed)
 //   { type: 'arrow',    a, b }
+//   { type: 'arc',      cx, cy, r, startAngle, endAngle }  (radians)
 //   { type: 'circle' | 'ellipse', cx, cy, rx, ry }
 //   { type: 'rect',     x, y, w, h }
 export function classifyStroke(pts) {
@@ -492,6 +595,11 @@ export function classifyStroke(pts) {
       const s = snapLine(a, b);
       return { type: 'line', a: s.a, b: s.b };
     }
+    // A single continuous curve hugging one circle → a clean arc. Tried before
+    // the polyline straightener so a gently-swept arc (too short to trip the
+    // polyline's same-direction curve guard) isn't chopped into fake corners.
+    const arc = detectArc(pts, bb);
+    if (arc) return arc;
     // Multi-segment straightening: an L / staircase / few-segment zig-zag.
     const poly = detectPolyline(pts, bb);
     if (poly) return poly;

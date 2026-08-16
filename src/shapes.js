@@ -61,6 +61,25 @@ function buildArrowPath(a, b, opts) {
   return new Path(d, { stroke: opts.color, strokeWidth: opts.strokeWidth, fill: '', strokeDashArray: opts.dashArray || null });
 }
 
+// A clean circular arc, rendered as a single SVG arc-path segment.
+function buildArcPath(cx, cy, r, startAngle, endAngle, opts) {
+  const x1 = cx + r * Math.cos(startAngle);
+  const y1 = cy + r * Math.sin(startAngle);
+  const x2 = cx + r * Math.cos(endAngle);
+  const y2 = cy + r * Math.sin(endAngle);
+  const sweep = endAngle - startAngle;
+  const largeArc = Math.abs(sweep) > Math.PI ? 1 : 0;
+  const sweepFlag = sweep > 0 ? 1 : 0;
+  const d = `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} ${sweepFlag} ${x2} ${y2}`;
+  return new Path(d, {
+    stroke: opts.color,
+    strokeWidth: opts.strokeWidth,
+    fill: '',
+    strokeDashArray: opts.dashArray || null,
+    strokeLineCap: 'round',
+  });
+}
+
 // recognizeStroke(points, { strokeWidth, color, fill, cornerRadius }) -> { shape, type } | null
 export function recognizeStroke(pts, opts = {}) {
   const desc = classifyStroke(pts);
@@ -92,6 +111,11 @@ export function recognizeStroke(pts, opts = {}) {
       return { type: 'polygon', shape: buildPoly(desc.points, { color, strokeWidth, fill, dashArray }, true) };
     case 'arrow':
       return { type: 'arrow', shape: buildArrowPath(desc.a, desc.b, { color, strokeWidth, dashArray }) };
+    case 'arc':
+      return {
+        type: 'arc',
+        shape: buildArcPath(desc.cx, desc.cy, desc.r, desc.startAngle, desc.endAngle, { color, strokeWidth, dashArray }),
+      };
     case 'circle':
     case 'ellipse':
       return {

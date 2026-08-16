@@ -290,14 +290,44 @@ check('near-vertical line snaps to vertical', () => {
   assert.equal(d.a.x, d.b.x); // snapped upright
 });
 
-check('smooth open arc → null (not polyline)', () => {
-  // A half-circle arc: gentle, continuous bend — must NOT straighten to segments.
-  // Low jitter keeps it an unambiguous curve (all turns one direction).
+check('smooth open arc → arc (not straightened to segments)', () => {
+  // A half-circle arc: gentle, continuous bend — must NOT straighten to segments,
+  // and now recognizes as a clean circular arc.
   const pts = Array.from({ length: 41 }, (_, i) => {
     const t = (i / 40) * Math.PI;
     return { x: jitter(200 + 120 * Math.cos(t), 0.8), y: jitter(200 + 120 * Math.sin(t), 0.8) };
   });
-  assert.equal(classifyStroke(pts), null);
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'arc');
+  assert.ok(Math.abs(d.r - 120) < 6);
+  assert.ok(Math.abs(d.cx - 200) < 6 && Math.abs(d.cy - 200) < 6);
+});
+
+check('quarter-circle arc → arc', () => {
+  const pts = Array.from({ length: 31 }, (_, i) => {
+    const t = (i / 30) * (Math.PI / 2);
+    return { x: jitter(150 + 90 * Math.cos(t), 0.6), y: jitter(150 + 90 * Math.sin(t), 0.6) };
+  });
+  const d = classifyStroke(pts);
+  assert.equal(d?.type, 'arc');
+});
+
+check('shallow bend stays a line (not an arc)', () => {
+  // A very gentle curve — too close to straight to read as an arc.
+  const pts = Array.from({ length: 31 }, (_, i) => {
+    const t = i / 30;
+    return { x: 40 + t * 320, y: 100 + Math.sin(t * Math.PI) * 10 };
+  });
+  const d = classifyStroke(pts);
+  assert.notEqual(d?.type, 'arc');
+});
+
+check('scribble stays ink, not an arc', () => {
+  const pts = [];
+  for (let i = 0; i <= 40; i++) {
+    pts.push({ x: 80 + i * 4, y: 150 + Math.sin(i * 1.7) * 35 + (Math.random() - 0.5) * 20 });
+  }
+  assert.notEqual(classifyStroke(pts)?.type, 'arc');
 });
 
 check('tiny stroke → null (stays ink)', () => {
