@@ -19,6 +19,13 @@ import { initCad, getSketchJSON, loadSketchJSON } from './cad/cad-mode.js';
 import { initCadPanel } from './cad/cad-panel.js';
 import { initCadMenu } from './cad/cad-menu.js';
 import { getMode } from './modes.js';
+import { initDebugCapture } from './debug-capture.js';
+import { initDebugPanel } from './debug-panel.js';
+
+// Before anything else: start recording console errors and unhandled rejections.
+// When the user later says "that's broken", this buffer is the evidence handed
+// to the backend coding agent — including anything thrown during start-up.
+initDebugCapture();
 
 function handleCommand(command) {
   const canvas = getCanvas();
@@ -72,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeModelSelectionUI();
     initializeEventListeners();
     initOutputPanel();
+    initDebugPanel(); // must precede initVoice: it re-attaches a session that survived a reload
     initVoice();
 
     // Boards panel + autosave: render the list, then load the active board.

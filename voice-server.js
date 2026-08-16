@@ -23,10 +23,16 @@ try {
     // @google/genai missing — handled below.
 }
 
+// The backend coding agent behind debug mode. Its tools are handled HERE in the
+// relay (not in the browser): the repository lives on the server and must stay
+// there. Declarations are only offered to the model when the feature is actually
+// available — see debug-routes.js for the DEBUG_AGENT_ENABLED gate.
+const debugSessions = require('./debug/sessions');
+const { available: debugAvailable, unavailableReason: debugUnavailableReason } = require('./debug-routes');
+
 // Canvas tools the assistant can call. Coordinates/sizes are percentages (0-100)
 // of the board; the browser converts them and executes via Fabric.
-const TOOLS = Type ? [{
-    functionDeclarations: [
+const CANVAS_TOOLS = Type ? [
         { name: 'draw_line', description: "Draw a straight line. x1,y1,x2,y2 are percentages 0-100 of the board (origin top-left). Optional color (CSS name or hex), strokeWidth (px), lineStyle ('solid' | 'dashed' | 'dotted' — also on rect/ellipse/arrow/polyline).", parameters: { type: Type.OBJECT, properties: { x1: { type: Type.NUMBER }, y1: { type: Type.NUMBER }, x2: { type: Type.NUMBER }, y2: { type: Type.NUMBER }, color: { type: Type.STRING }, strokeWidth: { type: Type.NUMBER }, lineStyle: { type: Type.STRING }, fromVideo: { type: Type.BOOLEAN } }, required: ['x1', 'y1', 'x2', 'y2'] } },
         { name: 'draw_rect', description: 'Draw a rectangle of size (width,height) percent. Position it EITHER by center (cx,cy — preferred when centering on/around something) OR by top-left corner (x,y). Optional: color (outline), strokeWidth (px), fill (CSS name/hex; omit for transparent), fillOpacity (0-1), cornerRadius (px, for rounded corners).', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, cx: { type: Type.NUMBER }, cy: { type: Type.NUMBER }, width: { type: Type.NUMBER }, height: { type: Type.NUMBER }, color: { type: Type.STRING }, strokeWidth: { type: Type.NUMBER }, fill: { type: Type.STRING }, fillOpacity: { type: Type.NUMBER }, cornerRadius: { type: Type.NUMBER }, lineStyle: { type: Type.STRING }, fromVideo: { type: Type.BOOLEAN } }, required: ['width', 'height'] } },
         { name: 'draw_ellipse', description: 'Draw an ellipse/circle of size (width,height) percent. Position it EITHER by center (cx,cy — preferred; e.g. a circle AT a point) OR by the bounding box top-left (x,y). Optional: color (outline), strokeWidth (px), fill (CSS name/hex; omit for transparent), fillOpacity (0-1).', parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, cx: { type: Type.NUMBER }, cy: { type: Type.NUMBER }, width: { type: Type.NUMBER }, height: { type: Type.NUMBER }, color: { type: Type.STRING }, strokeWidth: { type: Type.NUMBER }, fill: { type: Type.STRING }, fillOpacity: { type: Type.NUMBER }, lineStyle: { type: Type.STRING }, fromVideo: { type: Type.BOOLEAN } }, required: ['width', 'height'] } },
@@ -63,8 +69,65 @@ const TOOLS = Type ? [{
         { name: 'cad_dimension', description: "CAD: add a driving dimension and re-solve. Pass value as a number or an expression using parameters (e.g. '150', 'w/2'). Target: entityIds=[one line] → its length; pointIds=[two points] → distance; entityIds=[one circle] → radius; entityIds=[two lines] → angle in degrees. To CHANGE an existing dimension pass dimId (from cad_get_sketch) and the new value instead. Lengths are in sketch units, not percent.", parameters: { type: Type.OBJECT, properties: { entityIds: { type: Type.ARRAY, items: { type: Type.STRING } }, pointIds: { type: Type.ARRAY, items: { type: Type.STRING } }, value: { type: Type.STRING }, dimId: { type: Type.STRING } }, required: ['value'] } },
         { name: 'cad_set_param', description: "CAD: create or update a named parameter, e.g. name 'w', value '200' or 'h*2' (expressions may reference other parameters). All dimensions using it re-solve immediately. Pass remove=true to delete the parameter instead.", parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, value: { type: Type.STRING }, remove: { type: Type.BOOLEAN } }, required: ['name'] } },
         { name: 'cad_delete', description: 'CAD: delete sketch entities and/or constraints (dimensions too) by id. Deleting an entity also removes its constraints and orphaned points. Use this to resolve an over-constrained conflict (solve.ok=false).', parameters: { type: Type.OBJECT, properties: { ids: { type: Type.ARRAY, items: { type: Type.STRING } } }, required: ['ids'] } },
-    ],
-}] : null;
+] : [];
+
+// Debug / bug-fix mode. These are executed by the relay itself: start_debug_session
+// packages what the user told you (plus a screenshot and the browser's captured
+// errors) into a bug report and wakes the coding agent on a fresh git branch;
+// debug_message is how the rest of the conversation reaches that agent.
+const DEBUG_TOOLS = Type ? [
+    {
+        name: 'start_debug_session',
+        description:
+            "Hand a problem with the WHITEBOARD APP ITSELF over to the backend coding agent, which works on the app's git repository and can ship a fix while you keep talking. Use it when the user reports that the app is broken or behaving wrong (a button does nothing, a shape lands in the wrong place, an error appeared, a feature is missing) — NOT for anything about the contents of their drawing. Describe the problem as completely as you can from the conversation: this text is all the agent gets. A screenshot of the board and the browser's captured console errors are attached automatically. After this call you are in debug mode: relay what the user says with debug_message.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                title: { type: Type.STRING, description: 'Short name for the bug, e.g. "Undo does not restore erased shapes". Becomes the branch name.' },
+                summary: { type: Type.STRING, description: 'What is wrong, in a sentence or two, in your own words.' },
+                stepsToReproduce: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'What the user did, in order, as far as you know it.' },
+                expected: { type: Type.STRING, description: 'What should have happened.' },
+                actual: { type: Type.STRING, description: 'What actually happened.' },
+                area: { type: Type.STRING, description: "Which part of the app: 'voice', 'cad', 'canvas', 'shapes', 'graph', 'math', 'boards', 'ui', 'server' — or your own word if none fit." },
+                severity: { type: Type.STRING, description: "'blocker' | 'major' | 'minor' | 'cosmetic'." },
+                suspectedFiles: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Optional: files you suspect, if the user or the errors point somewhere specific.' },
+                userQuote: { type: Type.STRING, description: "The user's own words about the problem, verbatim — the agent reads them too." },
+                wanted: { type: Type.STRING, description: 'What the user asked for, if they asked for a specific change rather than just reporting a fault.' },
+                includeScreenshot: { type: Type.BOOLEAN, description: 'Attach the current board image. Default true; set false only if the board is irrelevant.' },
+            },
+            required: ['title', 'summary'],
+        },
+    },
+    {
+        name: 'debug_message',
+        description:
+            "Send the user's words to the coding agent working on the fix, and get an immediate acknowledgement (the agent's actual progress arrives as spoken updates, so do not wait for it). While a debug session is open, EVERYTHING the user says about the problem, the fix, or what to do next goes through this tool — answer questions about the code by asking the agent, not from your own guesses. Restate faithfully and completely, including any new detail, correction or answer to a question the agent asked.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: { text: { type: Type.STRING, description: "What to tell the agent — the user's intent in full, not a summary." } },
+            required: ['text'],
+        },
+    },
+    {
+        name: 'debug_status',
+        description: 'Check on the coding agent: whether it is working or idle, the branch, files changed, commits pushed, and its last summary. Use it when the user asks how it is going, or before you claim anything about the state of the fix.',
+        parameters: { type: Type.OBJECT, properties: {} },
+    },
+    {
+        name: 'end_debug_session',
+        description: "Leave debug mode and go back to being the whiteboard assistant. Any uncommitted work is committed and pushed to the session's branch first (pass push=false to leave it in the working tree). Call this when the user says they are done debugging.",
+        parameters: { type: Type.OBJECT, properties: { push: { type: Type.BOOLEAN } } },
+    },
+] : [];
+
+const DEBUG_TOOL_NAMES = new Set(DEBUG_TOOLS.map((t) => t.name));
+
+// Gemini takes tools as a single functionDeclarations block; debug tools are
+// only included when the server can actually run them.
+function buildTools(includeDebug) {
+    if (!Type) return null;
+    return [{ functionDeclarations: includeDebug ? CANVAS_TOOLS.concat(DEBUG_TOOLS) : CANVAS_TOOLS }];
+}
 
 // The Live model id differs by API provider, and simultaneous video+audio+tools
 // works best on the Flash *live* models; native-audio models reject tool calls
@@ -126,12 +189,39 @@ CAD workflow: create geometry with cad_sketch_rect / cad_sketch_line / cad_sketc
 SPEAKING. Keep spoken answers short — a sentence or two; the board carries the detail. When the drawing is ambiguous (a digit you cannot read, a shape you cannot identify), ask one brief question instead of guessing.
 The very first message you receive will be the single word "BEGIN". When you see it, greet the user in one short sentence and invite them to draw or ask — and do not mention the word BEGIN.`;
 
-const LIVE_CONFIG = {
-    systemInstruction: SYSTEM_INSTRUCTION,
-    inputAudioTranscription: {},
-    outputAudioTranscription: {},
-    ...(TOOLS ? { tools: TOOLS } : {}),
-};
+// Appended only when the coding agent is available. Debug mode is a different
+// job from drawing, so it gets its own short brief rather than more bullets in
+// the drawing instructions.
+const DEBUG_INSTRUCTION = `
+
+DEBUG MODE — FIXING THE APP ITSELF
+Some problems are not about the drawing, they are about this app being broken: a button that does nothing, a shape that lands in the wrong place, an error message, a feature the user wants that does not exist. You can hand those to a backend coding agent that works on the app's own source code, on the machine serving this page. It creates a git branch, edits the code, runs the tests and the build, and pushes — the running site reloads the change by itself, so a fix can land while the user is still standing at the board.
+
+WHEN TO HAND OVER. The user says something is broken, wrong, missing or annoying about the APP — not about their drawing. If you are unsure which they mean, ask one short question ("do you mean the app is misbehaving, or shall I change your drawing?").
+
+THE HAND-OVER IS THE SKILL. Everything the agent knows about the problem is what you write in start_debug_session, so write it properly. Before calling it, make sure you can answer three things — what the user did, what happened, and what should have happened. Ask ONE short question if a critical one is missing; do not interrogate. Then call start_debug_session with:
+- title: a short name for the fault (it becomes the branch name)
+- summary: what is wrong, in your own words
+- stepsToReproduce: what the user did, in order
+- expected and actual: the two halves of the bug
+- area: which part of the app ('voice', 'cad', 'canvas', 'shapes', 'graph', 'math', 'boards', 'ui', 'server')
+- userQuote: the user's own words, verbatim
+- wanted: what they asked for, if they asked for a change rather than reporting a fault
+A screenshot of the board and the errors the browser captured are attached automatically — you do not need to describe the board, but DO describe anything you saw happen that a screenshot would not show. If you watched the failure yourself, say so, in the summary, as an observation.
+
+WHILE THE SESSION IS OPEN. You are now the voice of the coding agent. Do not draw, do not fix things on the board, do not speculate about the code. Everything the user says about the problem, the fix, or what to do next goes to the agent with debug_message, restated faithfully and in full — including corrections, extra detail, and answers to questions the agent asked. The agent's own words come back to you as spoken updates; read them out as they are, briefly, without embellishing or inventing progress. Use debug_status if the user asks how it is going. If the user asks for something unrelated to the bug, tell them you will pick it up after the session and offer to close it.
+The agent's fix reaches the page through a rebuild, so when an update says a reload is needed, tell the user to reload the page.
+When the user is done, call end_debug_session, then go back to being the whiteboard assistant.`;
+
+function liveConfig(includeDebug) {
+    const tools = buildTools(includeDebug);
+    return {
+        systemInstruction: SYSTEM_INSTRUCTION + (includeDebug ? DEBUG_INSTRUCTION : ''),
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        ...(tools ? { tools } : {}),
+    };
+}
 
 function attachVoiceServer(server) {
     if (!WebSocketServer) return; // ws unavailable
@@ -139,10 +229,17 @@ function attachVoiceServer(server) {
     const wss = new WebSocketServer({ server, path: '/voice' });
     wss.on('error', () => {}); // EADDRINUSE etc. handled by the http server
 
-    wss.on('connection', async (browserWs) => {
+    wss.on('connection', async (browserWs, req) => {
         const send = (obj) => {
             if (browserWs.readyState === 1) browserWs.send(JSON.stringify(obj));
         };
+
+        // The browser marks a reconnect (the coding agent's own push restarts the
+        // server) and names any debug session it was already in, so the fresh
+        // Live session picks the conversation up instead of greeting again.
+        const params = new URLSearchParams((req && req.url || '').split('?')[1] || '');
+        const isResume = params.get('resume') === '1';
+        const resumeDebugId = params.get('debug') || null;
 
         const apiKey = process.env.GEMINI_API_KEY;
         if (!GoogleGenAI || !apiKey) {
@@ -154,13 +251,186 @@ function attachVoiceServer(server) {
         const ai = new GoogleGenAI({ apiKey });
         let committed = false; // only forward model output once we've picked a working session
 
+        // ---- debug mode ------------------------------------------------------
+        // Canvas tools run in the browser; debug tools run HERE, because the git
+        // repository is on the server. The only thing the browser contributes is
+        // the capture (board screenshot + console errors) that goes into the
+        // bug report.
+        const debugOn = debugAvailable();
+        let debugSession = null;
+        let debugUnsubscribe = null;
+        let lastFrame = null; // newest board JPEG, the fallback screenshot
+        const captureWaiters = new Map();
+
+        // Speak to the model out-of-band. Same channel the BEGIN greeting uses:
+        // text the user never said, which the model treats as context.
+        const noteToModel = (text) => {
+            try { if (session) session.sendRealtimeInput({ text }); } catch (e) { /* session gone */ }
+        };
+
+        // Ask the browser for a fresh screenshot + captured console errors. Falls
+        // back to the last streamed video frame if the page does not answer.
+        const requestCapture = (timeoutMs = 5000) => new Promise((resolve) => {
+            const id = 'cap_' + Math.random().toString(36).slice(2, 9);
+            const finish = (value) => {
+                if (!captureWaiters.has(id)) return;
+                captureWaiters.delete(id);
+                clearTimeout(timer);
+                resolve(value);
+            };
+            const timer = setTimeout(
+                () => finish({ screenshot: lastFrame ? `data:image/jpeg;base64,${lastFrame}` : null, context: null }),
+                timeoutMs
+            );
+            captureWaiters.set(id, finish);
+            send({ type: 'debug_capture_request', id });
+        });
+
+        // Stream the coding agent's activity to the panel, and turn the parts the
+        // user should HEAR into notes for the model to speak.
+        const attachDebugEvents = (sess) => {
+            if (debugUnsubscribe) { debugUnsubscribe(); debugUnsubscribe = null; }
+            debugSession = sess;
+            send({ type: 'debug_state', state: debugSessions.publicState(sess) });
+            debugUnsubscribe = debugSessions.subscribe(sess.id, (event) => {
+                send({ type: 'debug_event', sessionId: sess.id, event });
+                if (event.kind === 'say') {
+                    noteToModel(
+                        'SYSTEM NOTE (the coding agent working on the fix, not the user): pass this on to the user ' +
+                        `now, briefly and without adding anything: "${event.message}"`
+                    );
+                } else if (event.kind === 'done') {
+                    noteToModel(
+                        'SYSTEM NOTE (the coding agent working on the fix, not the user): it has finished this round. ' +
+                        `Tell the user in one or two sentences: "${event.summary || 'Done.'}"` +
+                        (event.pushed ? ' The change is committed and pushed, so the site is picking it up.' : '') +
+                        (event.needsReload ? ' Tell them to reload the page to see it.' : '') +
+                        (event.needsUser ? ' It is waiting on an answer from the user — ask them for it.' : '')
+                    );
+                } else if (event.kind === 'error') {
+                    noteToModel(
+                        'SYSTEM NOTE (debug mode): the coding agent hit an error: ' + event.message +
+                        '. Tell the user plainly and ask whether to try again or close the session.'
+                    );
+                }
+                if (event.kind === 'status' && event.status === 'ended') {
+                    if (debugUnsubscribe) { debugUnsubscribe(); debugUnsubscribe = null; }
+                    debugSession = null;
+                }
+                if (event.kind === 'status' || event.kind === 'done' || event.kind === 'tool_result') {
+                    send({ type: 'debug_state', state: debugSessions.publicState(sess) });
+                }
+            });
+        };
+
+        // Re-bind this connection to a debug session that is still running (after
+        // a reconnect or a page reload) and tell the model it is still in debug
+        // mode. Returns false when the id is unknown or the session has ended.
+        const resumeDebugSession = (sessionId) => {
+            if (!debugOn || !sessionId) return false;
+            const sess = debugSessions.get(sessionId);
+            if (!sess || sess.status === 'ended') return false;
+            attachDebugEvents(sess);
+            noteToModel(
+                'SYSTEM NOTE (silent context — not the user speaking): a debug session is already open on branch ' +
+                `${sess.branch} for "${sess.report.title}". You are in debug mode: keep relaying what the user says ` +
+                'with debug_message and do not draw. Do not greet the user again.'
+            );
+            return true;
+        };
+
+        const handleDebugTool = async (name, args) => {
+            const params = args && typeof args === 'object' ? args : {};
+            if (!debugOn) return { ok: false, message: debugUnavailableReason() };
+
+            if (name === 'start_debug_session') {
+                if (debugSession && debugSession.status !== 'ended') {
+                    return {
+                        ok: false,
+                        message: `A debug session is already open on branch ${debugSession.branch}. Use debug_message to tell the agent about this, or end_debug_session first.`,
+                    };
+                }
+                const capture = params.includeScreenshot === false
+                    ? { screenshot: null, context: null }
+                    : await requestCapture();
+                try {
+                    const sess = await debugSessions.create({
+                        report: params,
+                        context: capture.context,
+                        screenshot: capture.screenshot,
+                    });
+                    attachDebugEvents(sess);
+                    debugSessions.send(sess, 'The user is standing at the whiteboard waiting. Start investigating.');
+                    return {
+                        ok: true,
+                        sessionId: sess.id,
+                        branch: sess.branch,
+                        model: require('./debug/agent').MODEL,
+                        screenshotAttached: !!capture.screenshot,
+                        missingFromReport: sess.warnings,
+                        message:
+                            `Debug session open on branch ${sess.branch}; the coding agent is reading the report now. ` +
+                            'Tell the user it is on it, then relay everything they say with debug_message. Its progress ' +
+                            'will reach you as spoken updates — do not call debug_status just to wait.' +
+                            (sess.warnings.length ? ` Missing from your report: ${sess.warnings.join(' ')}` : ''),
+                    };
+                } catch (e) {
+                    return { ok: false, message: `Could not start the debug session: ${e.message}` };
+                }
+            }
+
+            if (!debugSession || debugSession.status === 'ended') {
+                return { ok: false, message: 'No debug session is open. Call start_debug_session first.' };
+            }
+
+            if (name === 'debug_message') {
+                const result = debugSessions.send(debugSession, params.text);
+                return {
+                    ...result,
+                    message: result.ok
+                        ? (result.queued
+                            ? 'Passed on. The agent is mid-step and will pick it up next; its reply will come to you as a spoken update.'
+                            : 'Passed on. The agent is working; its reply will come to you as a spoken update.')
+                        : result.message,
+                };
+            }
+            if (name === 'debug_status') {
+                const state = debugSessions.publicState(debugSession);
+                return {
+                    ...state,
+                    message: state.status === 'working'
+                        ? 'The agent is working right now. Say so and wait for its update rather than calling again.'
+                        : 'The agent is idle — it is waiting for you to send it something.',
+                };
+            }
+            if (name === 'end_debug_session') {
+                const result = await debugSessions.end(debugSession, { push: params.push !== false });
+                if (debugUnsubscribe) { debugUnsubscribe(); debugUnsubscribe = null; }
+                debugSession = null;
+                return { ...result, message: `Debug session closed. The work is on branch ${result.branch}.` };
+            }
+            return { ok: false, message: `Unknown debug tool: ${name}` };
+        };
+
         // Forward a Gemini server message to the browser.
         const forward = (msg) => {
             if (msg.toolCall && Array.isArray(msg.toolCall.functionCalls)) {
-                send({
-                    type: 'tool_call',
-                    calls: msg.toolCall.functionCalls.map((fc) => ({ id: fc.id, name: fc.name, args: fc.args || {} })),
-                });
+                const calls = msg.toolCall.functionCalls.map((fc) => ({ id: fc.id, name: fc.name, args: fc.args || {} }));
+                const browserCalls = calls.filter((c) => !DEBUG_TOOL_NAMES.has(c.name));
+                const serverCalls = calls.filter((c) => DEBUG_TOOL_NAMES.has(c.name));
+                if (browserCalls.length) send({ type: 'tool_call', calls: browserCalls });
+                for (const call of serverCalls) {
+                    send({ type: 'debug_tool', name: call.name, args: call.args });
+                    handleDebugTool(call.name, call.args)
+                        .catch((e) => ({ ok: false, message: (e && e.message) || String(e) }))
+                        .then((result) => {
+                            try {
+                                session.sendToolResponse({
+                                    functionResponses: [{ id: call.id, name: call.name, response: result || {} }],
+                                });
+                            } catch (e) { /* session closed mid-call */ }
+                        });
+                }
             }
             const sc = msg.serverContent;
             if (!sc) return;
@@ -191,7 +461,7 @@ function attachVoiceServer(server) {
             ai.live
                 .connect({
                     model,
-                    config: { responseModalities: [Modality.AUDIO], ...LIVE_CONFIG },
+                    config: { responseModalities: [Modality.AUDIO], ...liveConfig(debugOn) },
                     callbacks: {
                         onopen: () => {},
                         onmessage: (msg) => {
@@ -242,9 +512,21 @@ function attachVoiceServer(server) {
 
         committed = true;
         console.log('🎤 Voice session connected (model: ' + workingModel + ')');
-        send({ type: 'ready' });
+        send({ type: 'ready', debugAvailable: debugOn, debugReason: debugOn ? null : debugUnavailableReason() });
         send({ type: 'info', message: 'Connected — model: ' + workingModel });
-        try { session.sendRealtimeInput({ text: 'BEGIN' }); } catch (e) { /* noop */ } // make the model greet first
+        const resumedDebug = resumeDebugSession(resumeDebugId);
+        if (isResume) {
+            // Picking a dropped conversation back up: no greeting, just enough
+            // context that the model does not start over.
+            noteToModel(
+                'SYSTEM NOTE (silent context — not the user speaking): the connection dropped and has just been ' +
+                'restored. Carry on from where you were. Do not greet the user, and do not mention the reconnection ' +
+                'unless they ask.' +
+                (resumedDebug ? '' : ' Say nothing until the user speaks.')
+            );
+        } else {
+            try { session.sendRealtimeInput({ text: 'BEGIN' }); } catch (e) { /* noop */ } // make the model greet first
+        }
 
         browserWs.on('message', (raw) => {
             let m;
@@ -253,7 +535,14 @@ function attachVoiceServer(server) {
                 if (m.type === 'audio') {
                     session.sendRealtimeInput({ audio: { data: m.data, mimeType: 'audio/pcm;rate=16000' } });
                 } else if (m.type === 'video') {
+                    lastFrame = m.data; // kept as the fallback screenshot for a bug report
                     session.sendRealtimeInput({ video: { data: m.data, mimeType: 'image/jpeg' } });
+                } else if (m.type === 'debug_capture') {
+                    const waiter = captureWaiters.get(m.id);
+                    if (waiter) waiter({ screenshot: m.screenshot || null, context: m.context || null });
+                } else if (m.type === 'debug_attach') {
+                    // The panel restored a session from before a page reload.
+                    if (!resumeDebugSession(m.sessionId)) send({ type: 'debug_state', state: null });
                 } else if (m.type === 'text') {
                     session.sendRealtimeInput({ text: m.data });
                 } else if (m.type === 'tool_response' && Array.isArray(m.responses)) {
@@ -270,6 +559,11 @@ function attachVoiceServer(server) {
 
         browserWs.on('close', () => {
             try { if (session) session.close(); } catch (e) { /* noop */ }
+            // The debug session itself outlives the socket (it is stored on disk
+            // and re-attached by id); only this connection's listener goes.
+            if (debugUnsubscribe) { debugUnsubscribe(); debugUnsubscribe = null; }
+            for (const finish of captureWaiters.values()) finish({ screenshot: null, context: null });
+            captureWaiters.clear();
         });
     });
 

@@ -9,6 +9,7 @@ Smart Whiteboard is an interactive web application that combines the simplicity 
 - **Graphing**: Automatically graph recognized equations.
 - **Voice Commands**: Control the whiteboard using voice commands.
 - **Multiple AI Models**: Choose between OpenAI GPT and Google Gemini for AI processing.
+- **Debug / bug-fix mode**: tell the voice assistant the app itself is broken and it hands the problem — with a screenshot, the console errors and what you did — to a coding agent that works on this repository, pushes a feature branch, and lets the running site hot-reload the fix. Off by default; see [`docs/debug-agent-skill.md`](docs/debug-agent-skill.md).
 
 ## 2. Technologies Used
 

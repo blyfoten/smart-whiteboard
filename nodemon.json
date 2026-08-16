@@ -1,0 +1,13 @@
+{
+  "_comment": [
+    "npm run dev runs webpack --watch alongside nodemon. Without this config nodemon",
+    "restarts the server on every src/ edit too — but src/ is the browser bundle,",
+    "which webpack already rebuilds, so those restarts only drop live voice sessions.",
+    "That matters most in debug mode: the coding agent edits src/ while the user is",
+    "mid-conversation with it. Watch the server's own files only."
+  ],
+  "watch": ["server.js", "voice-server.js", "debug-routes.js", "providers", "debug"],
+  "ext": "js,json",
+  "ignore": ["src/**", "public/**", "test/**", "node_modules/**", ".debug-sessions/**", "docs/**"],
+  "delay": 1000
+}

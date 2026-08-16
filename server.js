@@ -139,6 +139,11 @@ app.get('/plan', (req, res) => {
 // KEY ('fast' | 'balanced' | 'max'), never a model id — see providers/catalogue.js.
 app.get('/models', (req, res) => res.json(catalogue.publicCatalogue()));
 
+// Debug / bug-fix mode: the backend coding agent that works on this repository.
+// Inactive unless DEBUG_AGENT_ENABLED=1 — see debug-routes.js.
+const { attachDebugRoutes } = require('./debug-routes');
+attachDebugRoutes(app, { limiter: aiLimiter });
+
 // Shared handler for vision extraction across providers.
 async function handleExtract(req, res, providerName) {
     const { image, tier } = req.body;

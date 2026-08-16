@@ -8,7 +8,7 @@
     "start": "node server.js",
     "dev": "webpack --watch & nodemon server.js",
     "build:prod": "webpack --mode production",
-    "test": "node --no-warnings test/shape-classifier.test.mjs && node --no-warnings test/cad-core.test.mjs && node --no-warnings test/catalogue.test.mjs"
+    "test": "node --no-warnings test/shape-classifier.test.mjs && node --no-warnings test/cad-core.test.mjs && node --no-warnings test/catalogue.test.mjs && node --no-warnings test/debug-core.test.mjs"
   },
   "keywords": [],
   "author": "",

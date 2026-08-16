@@ -7,6 +7,8 @@
 import { getCanvas } from './canvas.js';
 import { appendToOutput } from './output.js';
 import { executeAction } from './canvas-actions.js';
+import { captureForBugReport, noteVoiceTool } from './debug-capture.js';
+import { setDebugSession, getDebugSessionId } from './debug-panel.js';
 
 let active = false;
 let ws = null;
@@ -16,6 +18,13 @@ let processor = null;
 let sourceNode = null;
 let videoTimer = null;
 let hintShown = false;
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+
+// The coding agent restarts the server every time it pushes a fix, which drops
+// this socket. Reconnecting (rather than dying) is what lets a debug session
+// survive its own deployment.
+const MAX_RECONNECTS = 8;
 
 // Coalesce streaming transcript fragments into one growing line per speaker.
 let _transcriptRole = null;
@@ -57,6 +66,7 @@ async function handleToolCalls(calls) {
       result = { error: (e && e.message) || String(e) };
     }
     responses.push({ id: call.id, name: call.name, result });
+    noteVoiceTool(call.name, call.args || {}); // evidence for a later bug report
     appendToOutput(`<i>🖊️ ${call.name}</i>`);
   }
   if (ws && ws.readyState === 1) {
@@ -244,37 +254,65 @@ async function start() {
     return;
   }
 
+  openSocket();
+  active = true;
+  updateButton();
+}
+
+// Open (or re-open) the relay socket. The mic graph and frame timer are built
+// once and keep writing to whatever socket `ws` currently points at, so a
+// reconnect does not disturb the microphone.
+function openSocket() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/voice`);
+  // On a reconnect the relay must NOT restart the conversation with a greeting,
+  // and should re-bind the debug session before the model says anything — both
+  // are decided from these parameters, which arrive before the socket is live.
+  const params = new URLSearchParams();
+  if (reconnectAttempts > 0) params.set('resume', '1');
+  const debugId = getDebugSessionId();
+  if (debugId) params.set('debug', debugId);
+  const query = params.toString();
+  ws = new WebSocket(`${proto}//${location.host}/voice${query ? `?${query}` : ''}`);
 
   ws.onopen = () => {
-    micCtx = new (window.AudioContext || window.webkitAudioContext)();
-    sourceNode = micCtx.createMediaStreamSource(micStream);
-    processor = micCtx.createScriptProcessor(4096, 1, 1);
-    sourceNode.connect(processor);
-    processor.connect(micCtx.destination);
+    if (!micCtx) {
+      micCtx = new (window.AudioContext || window.webkitAudioContext)();
+      sourceNode = micCtx.createMediaStreamSource(micStream);
+      processor = micCtx.createScriptProcessor(4096, 1, 1);
+      sourceNode.connect(processor);
+      processor.connect(micCtx.destination);
 
-    processor.onaudioprocess = (e) => {
-      if (!ws || ws.readyState !== 1) return;
-      const input = e.inputBuffer.getChannelData(0);
-      const down = downsampleTo16k(input, micCtx.sampleRate);
-      ws.send(JSON.stringify({ type: 'audio', data: floatToPCM16Base64(down) }));
-    };
+      processor.onaudioprocess = (e) => {
+        if (!ws || ws.readyState !== 1) return;
+        const input = e.inputBuffer.getChannelData(0);
+        const down = downsampleTo16k(input, micCtx.sampleRate);
+        ws.send(JSON.stringify({ type: 'audio', data: floatToPCM16Base64(down) }));
+      };
+    }
 
     // Stream whiteboard frames ~1 fps.
-    videoTimer = setInterval(() => {
-      if (!ws || ws.readyState !== 1) return;
-      const frame = captureFrameBase64();
-      if (frame) ws.send(JSON.stringify({ type: 'video', data: frame }));
-    }, FRAME_INTERVAL_MS);
+    if (!videoTimer) {
+      videoTimer = setInterval(() => {
+        if (!ws || ws.readyState !== 1) return;
+        const frame = captureFrameBase64();
+        if (frame) ws.send(JSON.stringify({ type: 'video', data: frame }));
+      }, FRAME_INTERVAL_MS);
+    }
   };
 
   ws.onmessage = (event) => {
     let msg;
     try { msg = JSON.parse(event.data); } catch (e) { return; }
     switch (msg.type) {
-      case 'ready':
+      case 'ready': {
         setStatus('🎤 Voice: listening — speak now');
+        reconnectAttempts = 0;
+        // A debug session outlives this socket (and the server restart that
+        // usually killed it) — re-bind the new Live session to it.
+        const debugId = getDebugSessionId();
+        if (debugId && ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'debug_attach', sessionId: debugId }));
+        }
         // A stored calibration (from calibrate_check) primes the new session so
         // the assistant's eye-based aim is corrected without re-calibrating.
         try {
@@ -303,6 +341,7 @@ async function start() {
           );
         }
         break;
+      }
       case 'audio':
         playPCM16Base64(msg.data);
         break;
@@ -329,24 +368,65 @@ async function start() {
         if (msg.message) appendToOutput(`<b>Voice session closed:</b> ${msg.message}`, true);
         setStatus('Voice: session closed');
         break;
+
+      // ---- debug / bug-fix mode ------------------------------------------
+      // The assistant is handing a problem to the backend coding agent: attach
+      // the evidence only the browser has — a clean board screenshot and the
+      // errors the page actually threw.
+      case 'debug_capture_request': {
+        let payload = { screenshot: null, context: null };
+        try {
+          payload = captureForBugReport();
+        } catch (e) {
+          appendToOutput(`<b>Debug capture failed:</b> ${e.message}`, true);
+        }
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'debug_capture', id: msg.id, ...payload }));
+        }
+        break;
+      }
+      case 'debug_tool':
+        appendToOutput(`<i>🛠️ ${msg.name}</i>`);
+        break;
+      case 'debug_state':
+        setDebugSession(msg.state || null);
+        break;
+      case 'debug_event':
+        // The panel streams these itself over SSE (it must keep working across
+        // the server restarts the agent causes) — nothing to do here.
+        break;
+
       default:
         break;
     }
   };
 
   ws.onerror = () => {
-    appendToOutput('<b>Voice mode:</b> WebSocket connection error.', true);
-  };
-  ws.onclose = () => {
-    if (active) stop();
+    if (!reconnectAttempts) appendToOutput('<b>Voice mode:</b> WebSocket connection error.', true);
   };
 
-  active = true;
-  updateButton();
+  ws.onclose = () => {
+    if (!active) return;
+    // A drop mid-session is usually the server restarting — which the coding
+    // agent causes itself whenever it pushes a fix. Come back rather than
+    // dumping the user out of the conversation.
+    if (reconnectAttempts < MAX_RECONNECTS) {
+      const delay = Math.min(15000, 1500 * Math.pow(2, reconnectAttempts));
+      reconnectAttempts++;
+      setStatus(`Voice: reconnecting (${reconnectAttempts}/${MAX_RECONNECTS})…`);
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => { if (active) openSocket(); }, delay);
+      return;
+    }
+    appendToOutput('<b>Voice mode:</b> lost the connection to the server.', true);
+    stop();
+  };
 }
 
 function stop() {
   active = false;
+  reconnectAttempts = 0;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (videoTimer) { clearInterval(videoTimer); videoTimer = null; }
   if (processor) { try { processor.disconnect(); } catch (e) {} processor = null; }
   if (sourceNode) { try { sourceNode.disconnect(); } catch (e) {} sourceNode = null; }
