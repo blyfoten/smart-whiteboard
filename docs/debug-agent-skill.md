@@ -106,7 +106,24 @@ nodemon). So:
 5. the panel shows a **Reload** button when the fix touched `src/` or `public/`,
    and the assistant says so out loud.
 
-Two things exist purely to survive that reload loop:
+The two ways this loop has actually broken, both now guarded:
+
+- **A stale bundle.** `server.js` decided whether to rebuild by comparing the
+  bundle's mtime against `src/*.js` — top level only. A commit touching nothing
+  but `src/cad/*.js` therefore read as "up to date", and the fix sat in the
+  repository while the browser ran the old code. The scan is recursive now, and
+  runs when the app page is requested rather than only at startup (nodemon does
+  not restart on `src/` changes, by design). After a build the bundle's mtime is
+  stamped, because webpack does not rewrite a file whose content is unchanged
+  and the old mtime would read as stale forever.
+- **A dead watcher.** `watch-branch.sh` ran under `set -e`, so the first
+  `git pull --ff-only` that refused — a branch with local commits the remote did
+  not have — exited the script. Nothing pulled after that, silently. It now logs
+  and keeps polling, warns once per distinct condition instead of every 5s, and
+  when the local commits already exist on the branch it is being asked to follow
+  it moves to that branch instead of sitting stuck.
+
+Two more things exist purely to survive the reload loop:
 
 - `nodemon.json` narrows the watch set to server-side files, so an edit to `src/`
   (the browser bundle, which webpack handles) no longer restarts the server and

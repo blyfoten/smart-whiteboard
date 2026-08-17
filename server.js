@@ -31,37 +31,85 @@ ensureDependencies();
 // The git watcher pulls but doesn't rebuild the webpack bundle. If webpack
 // --watch isn't running, the served bundle goes stale. Rebuild it on startup
 // when any src/*.js is newer than public/dist/bundle.js. Disable with NO_AUTO_BUILD=1.
-function ensureBundle() {
-    if (process.env.NO_AUTO_BUILD) return;
+// The newest mtime under src/ — RECURSIVELY. src/cad/ lives a level down, and
+// a check that only scanned the top level reported "up to date" after a pull
+// that changed nothing but src/cad/*.js, so that work never reached the served
+// bundle. webpack.config.js counts too: a config change re-bundles everything.
+function newestSourceMtime() {
     const fs = require('fs');
     const path = require('path');
-    const bundlePath = path.join(__dirname, 'public', 'dist', 'bundle.js');
-    const srcDir = path.join(__dirname, 'src');
-    let bundleMtime = 0;
-    try {
-        bundleMtime = fs.statSync(bundlePath).mtimeMs;
-    } catch (e) {
-        bundleMtime = 0; // missing bundle
-    }
-    let newestSrc = 0;
-    try {
-        for (const f of fs.readdirSync(srcDir)) {
-            if (f.endsWith('.js')) {
-                const m = fs.statSync(path.join(srcDir, f)).mtimeMs;
-                if (m > newestSrc) newestSrc = m;
+    let newest = 0;
+    const walk = (dir) => {
+        let entries;
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch (e) {
+            return;
+        }
+        for (const entry of entries) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                walk(full);
+            } else if (entry.name.endsWith('.js')) {
+                try {
+                    const m = fs.statSync(full).mtimeMs;
+                    if (m > newest) newest = m;
+                } catch (e) { /* vanished mid-scan */ }
             }
         }
-    } catch (e) {
-        return; // no src dir — nothing to build
+    };
+    walk(path.join(__dirname, 'src'));
+    for (const file of ['webpack.config.js', '.babelrc']) {
+        try {
+            const m = fs.statSync(path.join(__dirname, file)).mtimeMs;
+            if (m > newest) newest = m;
+        } catch (e) { /* optional */ }
     }
-    if (bundleMtime && bundleMtime >= newestSrc) return; // up to date
-    console.warn('📦 Bundle missing or stale — running npm run build...');
+    return newest;
+}
+
+function bundleIsStale() {
+    const fs = require('fs');
+    const path = require('path');
+    let bundleMtime = 0;
+    try {
+        bundleMtime = fs.statSync(path.join(__dirname, 'public', 'dist', 'bundle.js')).mtimeMs;
+    } catch (e) {
+        return true; // missing bundle
+    }
+    const newest = newestSourceMtime();
+    return !newest ? false : bundleMtime < newest;
+}
+
+let _lastBuildAttempt = 0;
+function buildBundle(reason) {
+    // Don't stampede: a failing build must not re-run on every request, and a
+    // webpack --watch rebuild in flight will settle on its own.
+    if (Date.now() - _lastBuildAttempt < 15000) return false;
+    _lastBuildAttempt = Date.now();
+    console.warn(`📦 ${reason} — running npm run build...`);
     try {
         require('child_process').execSync('npm run build', { cwd: __dirname, stdio: 'inherit' });
+        // webpack skips writing a bundle whose content is unchanged ("compared
+        // for emit"), leaving the old mtime behind — which would read as stale
+        // forever and rebuild on every request. Stamp it as built.
+        const fs = require('fs');
+        const path = require('path');
+        const now = new Date();
+        try {
+            fs.utimesSync(path.join(__dirname, 'public', 'dist', 'bundle.js'), now, now);
+        } catch (e) { /* build produced no bundle — the next check will retry */ }
         console.warn('📦 Bundle build complete.');
+        return true;
     } catch (e) {
         console.error('📦 Auto build failed:', e.message);
+        return false;
     }
+}
+
+function ensureBundle() {
+    if (process.env.NO_AUTO_BUILD) return;
+    if (bundleIsStale()) buildBundle('Bundle missing or stale');
 }
 ensureBundle();
 
@@ -128,6 +176,20 @@ app.use(cors({
         return callback(null, false);
     },
 }));
+// Keep the served bundle honest. nodemon deliberately does NOT watch src/ (a
+// restart would drop live voice sessions — see nodemon.json), so a git pull that
+// only changes src/ never reaches the startup check above. Without this, the
+// repository has the fix and the browser is still running the old code: exactly
+// how a pushed CAD change ended up invisible in the app. Rebuilding here is a
+// no-op whenever webpack --watch is running, and costs a few stat calls.
+app.use((req, res, next) => {
+    if (process.env.NO_AUTO_BUILD) return next();
+    if (req.method !== 'GET') return next();
+    const wantsApp = req.path === '/' || req.path === '/index.html' || req.path === '/dist/bundle.js';
+    if (wantsApp && bundleIsStale()) buildBundle('Bundle is stale on request');
+    next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Serve the living improvement/feature plan at /plan
