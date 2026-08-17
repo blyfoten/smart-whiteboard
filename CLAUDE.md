@@ -82,7 +82,7 @@ Voice mode can hand a problem with **the app itself** to a coding agent that wor
 
 ## Notes / known rough edges
 
-- `AGENTS.md` is partially outdated: it predates the phase-1 refactor that split the old `src/index.js` monolith into the modules above and deleted the dead `public/js/app.js`. Trust the actual `src/` layout over that file.
+- `AGENTS.md` deliberately does not repeat this file: it carries the conventions, the traps, and the online code agent's operating rules, and points here for the architecture map. Keep it that way — both files go into the debug agent's prompt, so anything said twice is context spent twice.
 - `public/test.html` is a standalone scratch page, not part of the app.
 - Webpack `mode` defaults to development; use `build:prod` for deployable output.
 - Commit style in history is Conventional Commits (`feat:`, `fix:`, `refactor:`).
