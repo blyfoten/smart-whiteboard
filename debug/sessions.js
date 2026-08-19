@@ -251,7 +251,14 @@ async function runQueue(session) {
     session.cancelled = false;
     emit(session, { kind: 'status', status: 'working' });
 
+    // Between turns the session is idle and watch-branch.sh is free to move the
+    // shared checkout elsewhere (e.g. a newer push from another session). Lock
+    // it for the whole turn — including the re-checkout below, in case that's
+    // exactly what happened — so nothing switches branches out from under the
+    // agent while it edits, commits and pushes.
+    workspace.lockWorkspace(session.branch);
     try {
+        await workspace.createBranch(session.branch);
         while (true) {
             if (session.pending.length) {
                 appendUserText(session, session.pending.splice(0, session.pending.length).join('\n\n'));
@@ -273,6 +280,8 @@ async function runQueue(session) {
         session.status = 'error';
         emit(session, { kind: 'error', message: (e && e.message) || String(e) });
         emit(session, { kind: 'status', status: 'error' });
+    } finally {
+        workspace.unlockWorkspace();
     }
     persist(session);
 }
@@ -304,10 +313,16 @@ async function end(session, { push = true } = {}) {
     session.pending = [];
     let pushResult = null;
     if (push) {
-        const dirty = await workspace.isDirty();
-        if (dirty) {
-            const commit = await workspace.commitAll(`chore: wip from debug session ${session.id}`);
-            if (commit.ok) pushResult = await workspace.push(session.branch);
+        workspace.lockWorkspace(session.branch);
+        try {
+            await workspace.createBranch(session.branch);
+            const dirty = await workspace.isDirty();
+            if (dirty) {
+                const commit = await workspace.commitAll(`chore: wip from debug session ${session.id}`, session.branch);
+                if (commit.ok) pushResult = await workspace.push(session.branch);
+            }
+        } finally {
+            workspace.unlockWorkspace();
         }
     }
     session.status = 'ended';

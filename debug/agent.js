@@ -235,7 +235,7 @@ async function executeTool(name, input, session) {
         case 'git_diff':
             return { content: await workspace.diff({ stat: args.stat === true }) };
         case 'commit_and_push': {
-            const commit = await workspace.commitAll(args.message);
+            const commit = await workspace.commitAll(args.message, session.branch);
             if (!commit.ok) return { content: commit.message, meta: { pushed: false } };
             const pushed = await workspace.push(session.branch);
             return {

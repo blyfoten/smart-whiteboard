@@ -15,6 +15,15 @@ FAST_INTERVAL=5
 SLOW_INTERVAL=30
 FAST_DURATION=600  # 10 minutes in seconds
 
+# debug/sessions.js writes this file (branch name as contents) for as long as a
+# debug session's coding agent owns the shared working directory — from before
+# it re-checks-out its branch through the end of its turn. Touching the
+# checkout during that window is exactly what stranded a fix commit on the
+# wrong branch once already: the watcher switched HEAD to what it thought was
+# the "latest" branch mid-session, and the agent's next commit landed there
+# instead of on its own branch. Stand off entirely while the lock is present.
+LOCK_FILE=".debug-sessions/.workspace-lock"
+
 last_update=0
 last_warning=""
 
@@ -118,6 +127,12 @@ echo "Watching for the latest updated branch (currently $(git rev-parse --abbrev
 echo "Polling: ${FAST_INTERVAL}s for ${FAST_DURATION}s after a pull, then ${SLOW_INTERVAL}s"
 
 while true; do
+  if [ -f "$LOCK_FILE" ]; then
+    warn_once "locked" "debug session working on $(cat "$LOCK_FILE" 2>/dev/null || echo '?') — deploy loop paused"
+    sleep "$FAST_INTERVAL"
+    continue
+  fi
+
   git fetch origin --quiet 2>/dev/null
 
   latest_branch=$(latest_remote_branch)

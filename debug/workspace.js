@@ -329,9 +329,24 @@ async function diff({ staged = false, stat = false } = {}) {
 const COMMIT_NAME = process.env.DEBUG_AGENT_GIT_NAME || 'Whiteboard Debug Agent';
 const COMMIT_EMAIL = process.env.DEBUG_AGENT_GIT_EMAIL || 'debug-agent@smart-whiteboard.local';
 
-async function commitAll(message) {
+// watch-branch.sh polls this same working directory and can `checkout` between
+// an agent turn's steps. lockWorkspace() (held for the whole turn) is the main
+// guard; this is the backstop for the sliver it doesn't cover — commitAll/push
+// refuse to act if HEAD has drifted off the branch the caller expects, instead
+// of silently committing or pushing the wrong branch's work.
+async function commitAll(message, expectedBranch) {
     const msg = String(message || '').trim();
     if (!msg) throw new WorkspaceError('A commit message is required.');
+    if (expectedBranch) {
+        const on = await currentBranch();
+        if (on !== expectedBranch) {
+            return {
+                ok: false,
+                message: `refusing to commit: workspace is checked out on ${on}, not ${expectedBranch} ` +
+                    '(something switched branches mid-turn)',
+            };
+        }
+    }
     const add = await git(['add', '-A']);
     if (!add.ok) return { ok: false, message: `git add failed: ${add.stderr || add.error}` };
     const staged = await gitText(['diff', '--staged', '--name-only']);
@@ -348,6 +363,15 @@ async function commitAll(message) {
 // Push with the same backoff the repo's other network steps use — a transient
 // DNS/TLS hiccup should not fail a fix that is already committed.
 async function push(branch, { attempts = 4 } = {}) {
+    const on = await currentBranch();
+    if (on !== branch) {
+        return {
+            ok: false,
+            branch,
+            message: `refusing to push ${branch}: workspace is checked out on ${on} instead ` +
+                '(something switched branches mid-turn)',
+        };
+    }
     let last = null;
     for (let i = 0; i < attempts; i++) {
         const res = await git(['push', '-u', 'origin', branch], { timeout: 180000 });
@@ -360,6 +384,24 @@ async function push(branch, { attempts = 4 } = {}) {
         await new Promise((r) => setTimeout(r, 2000 * Math.pow(2, i)));
     }
     return { ok: false, branch, message: (last && (last.stderr || last.error)) || 'push failed' };
+}
+
+// A debug session holds this lock for the whole time it owns the shared
+// working directory (session creation through the end of each turn), so
+// watch-branch.sh knows to leave the checkout alone. Best-effort: if the
+// write fails, commitAll/push's branch checks above are still there to catch
+// the fallout instead of silently mis-committing.
+const LOCK_PATH = path.join(REPO_ROOT, '.debug-sessions', '.workspace-lock');
+
+function lockWorkspace(branch) {
+    try {
+        fs.mkdirSync(path.dirname(LOCK_PATH), { recursive: true });
+        fs.writeFileSync(LOCK_PATH, branch, 'utf8');
+    } catch (e) { /* best-effort */ }
+}
+
+function unlockWorkspace() {
+    try { fs.rmSync(LOCK_PATH, { force: true }); } catch (e) { /* already gone */ }
 }
 
 module.exports = {
@@ -385,4 +427,6 @@ module.exports = {
     diff,
     commitAll,
     push,
+    lockWorkspace,
+    unlockWorkspace,
 };
