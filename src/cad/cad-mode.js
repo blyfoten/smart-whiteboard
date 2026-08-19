@@ -918,6 +918,32 @@ export function cadApiDimension({ entityIds, pointIds, expr, dimId }) {
   return { ok: true, id: con.id, kind: draft.constraint.type };
 }
 
+// Parallel-copy an existing line chain at a perpendicular distance — the CAD
+// "offset" tool (wall/panel faces, parallel edges). `entityIds` must be one
+// connected, non-branching run of existing lines; `distance` is signed
+// (negative flips the side). An open chain also gets end-cap lines dimensioned
+// to the offset amount, so a wall's thickness is a driving dimension from the
+// start rather than something added by hand afterward.
+export function cadApiOffset(entityIds, distance) {
+  const ids = (Array.isArray(entityIds) ? entityIds : [entityIds]).map(String);
+  const d = Number(distance);
+  if (!Number.isFinite(d) || d === 0) return { error: 'distance must be a non-zero number' };
+  const missing = ids.filter((id) => !_sketch.entity(id));
+  if (missing.length) return { error: `Unknown id(s): ${missing.join(', ')} — call cad_get_sketch for current ids.` };
+  const before = _sketch.toJSON();
+  const result = _sketch.offsetChain(ids, d);
+  if (!result) {
+    return { error: 'entityIds must form one connected, non-branching run of lines (no T-junctions or gaps).' };
+  }
+  commit(before);
+  return {
+    ok: true,
+    lineIds: result.lines.map((l) => l.id),
+    pointIds: result.points.map((p) => p.id),
+    capLineIds: result.caps.map((l) => l.id),
+  };
+}
+
 export function cadApiSetParam(name, expr, remove) {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(name || ''))) return { error: 'Invalid parameter name.' };
   const before = _sketch.toJSON();

@@ -28,6 +28,68 @@ import { evaluateExpression } from './expr.js';
 
 export const DIMENSION_TYPES = ['distance', 'radius', 'angle'];
 
+// --- offset geometry helpers (module-private; used by Sketch#offsetChain) ---
+
+// Order a set of line entities into the single simple path they form: each
+// interior point touched by exactly two of the given lines, at most two
+// points touched by exactly one (an open chain's ends) or none (a closed
+// loop). Returns { pointOrder, lineOrder, closed } or null if the ids branch
+// (a T-junction), don't connect, or form more than one run.
+function orderChain(lines) {
+  const adj = new Map(); // point id -> [{ other, lineId }]
+  const touch = (a, b, lineId) => {
+    if (!adj.has(a)) adj.set(a, []);
+    adj.get(a).push({ other: b, lineId });
+  };
+  lines.forEach((l) => { touch(l.p1, l.p2, l.id); touch(l.p2, l.p1, l.id); });
+
+  for (const edges of adj.values()) {
+    if (edges.length > 2) return null; // a T-junction — not a simple chain
+  }
+  const ends = [...adj.entries()].filter(([, edges]) => edges.length === 1).map(([id]) => id);
+  let start;
+  let closed;
+  if (ends.length === 2) { start = ends[0]; closed = false; }
+  else if (ends.length === 0) { start = lines[0].p1; closed = true; }
+  else return null; // more than one open run
+
+  const pointOrder = [start];
+  const lineOrder = [];
+  const usedLines = new Set();
+  let current = start;
+  for (let i = 0; i < lines.length; i++) {
+    const next = (adj.get(current) || []).find((e) => !usedLines.has(e.lineId));
+    if (!next) return null;
+    usedLines.add(next.lineId);
+    lineOrder.push(next.lineId);
+    pointOrder.push(next.other);
+    current = next.other;
+  }
+  if (usedLines.size !== lines.length) return null;
+  if (closed) {
+    if (pointOrder[pointOrder.length - 1] !== start) return null;
+    pointOrder.pop(); // drop the duplicate closing point — addChain re-adds it
+  }
+  return { pointOrder, lineOrder, closed };
+}
+
+// Unit normal of a -> b, rotated 90° (canvas y-down: positive `distance`
+// offsets to the right of travel).
+function unitNormal(a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: -dy / len, y: dx / len };
+}
+
+// Intersection of infinite lines p1+t*d1 and p2+s*d2, or null if parallel.
+function rayIntersect(p1, d1, p2, d2) {
+  const denom = d1.x * d2.y - d1.y * d2.x;
+  if (Math.abs(denom) < 1e-9) return null;
+  const t = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / denom;
+  return { x: p1.x + t * d1.x, y: p1.y + t * d1.y };
+}
+
 // How many scalar equations each constraint contributes (for the DOF estimate).
 const EQUATION_COUNT = {
   horizontal: 1, vertical: 1, parallel: 1, perpendicular: 1, equal: 1,
@@ -189,6 +251,73 @@ export class Sketch {
       return true;
     });
     return true;
+  }
+
+  // Parallel-copy an existing, connected run of lines at perpendicular
+  // `distance` (signed — negative flips to the other side) — the CAD "offset"
+  // tool: draw a wall/panel centreline once, offset it for the other face.
+  // Corners are mitred by intersecting the neighbouring offset (infinite)
+  // lines, matching the true offset-polygon shape. An open chain also gets a
+  // cap line closing each end, whose length is exactly the offset distance —
+  // a ready-made thickness dimension target. Each new segment gets a
+  // 'parallel' constraint against its source so the copy tracks later edits.
+  // Returns { lines, points, caps, closed } (new model objects), or null if
+  // `lineIds` isn't a single simple chain of existing lines.
+  offsetChain(lineIds, distance) {
+    const srcLines = lineIds.map((id) => this.entity(id));
+    if (!srcLines.length || srcLines.some((l) => !l || l.type !== 'line')) return null;
+    const order = orderChain(srcLines);
+    if (!order) return null;
+    const { pointOrder, lineOrder, closed } = order;
+
+    const verts = pointOrder.map((id) => this.point(id));
+    if (verts.some((v) => !v)) return null;
+    const n = verts.length;
+    const segCount = closed ? n : n - 1;
+    const segNormal = [];
+    for (let i = 0; i < segCount; i++) {
+      segNormal.push(unitNormal(verts[i], verts[(i + 1) % n]));
+    }
+
+    const offsetPts = verts.map((v, i) => {
+      const prevSeg = closed ? (i - 1 + segCount) % segCount : i - 1;
+      const nextSeg = closed ? i % segCount : i;
+      const hasPrev = prevSeg >= 0 && prevSeg < segCount;
+      const hasNext = nextSeg >= 0 && nextSeg < segCount;
+      if (hasPrev && hasNext) {
+        const before = verts[(i - 1 + n) % n];
+        const after = verts[(i + 1) % n];
+        const pA = { x: v.x + segNormal[prevSeg].x * distance, y: v.y + segNormal[prevSeg].y * distance };
+        const pB = { x: v.x + segNormal[nextSeg].x * distance, y: v.y + segNormal[nextSeg].y * distance };
+        const hit = rayIntersect(
+          pA, { x: v.x - before.x, y: v.y - before.y },
+          pB, { x: after.x - v.x, y: after.y - v.y }
+        );
+        return hit || { x: (pA.x + pB.x) / 2, y: (pA.y + pB.y) / 2 };
+      }
+      const nrm = hasNext ? segNormal[nextSeg] : segNormal[prevSeg];
+      return { x: v.x + nrm.x * distance, y: v.y + nrm.y * distance };
+    });
+
+    const { points: newPoints, lines: newLines } = this.addChain(offsetPts, closed, 0);
+    lineOrder.forEach((srcId, i) => {
+      this.addConstraint({ type: 'parallel', a: srcId, b: newLines[i].id });
+    });
+
+    const caps = [];
+    if (!closed) {
+      const capEnds = [
+        [pointOrder[0], newPoints[0].id],
+        [pointOrder[pointOrder.length - 1], newPoints[newPoints.length - 1].id],
+      ];
+      capEnds.forEach(([a, b]) => {
+        if (a === b) return;
+        caps.push(this.addLine(a, b));
+        this.addConstraint({ type: 'distance', p1: a, p2: b, expr: String(Math.abs(distance)) });
+      });
+    }
+
+    return { lines: newLines, points: newPoints, caps, closed };
   }
 
   // --- parameters ---
