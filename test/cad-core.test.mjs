@@ -88,6 +88,54 @@ check('sketch: mergePoints rewrites refs and drops degenerate lines', () => {
   assert.equal(s.constraints.length, 0);
 });
 
+check('sketch: offsetChain parallel-copies a single line with dimensioned caps', () => {
+  const s = new Sketch();
+  const a = s.addPoint(0, 0);
+  const b = s.addPoint(100, 0);
+  const l = s.addLine(a.id, b.id);
+  const res = s.offsetChain([l.id], 20);
+  assert.ok(res, 'offset should succeed');
+  assert.equal(res.lines.length, 1);
+  assert.equal(res.caps.length, 2); // open chain: both ends capped
+  const [na, nb] = res.points;
+  near(na.y, 20); // straight horizontal line offset "down" (y-down canvas)
+  near(nb.y, 20);
+  near(na.x, 0);
+  near(nb.x, 100);
+  // caps are dimensioned to the offset distance
+  const dims = s.constraints.filter((c) => c.type === 'distance');
+  assert.equal(dims.length, 2);
+  dims.forEach((d) => near(s.evalDim(d.expr), 20));
+  // new line is constrained parallel to the source
+  assert.ok(s.constraints.some((c) => c.type === 'parallel' && (c.a === l.id || c.b === l.id)));
+});
+
+check('sketch: offsetChain miters a right-angle corner', () => {
+  const s = new Sketch();
+  const { lines } = s.addChain([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }], false);
+  const res = s.offsetChain(lines.map((l) => l.id), 10);
+  assert.ok(res, 'offset should succeed');
+  assert.equal(res.lines.length, 2);
+  assert.equal(res.caps.length, 2);
+  // the corner point is mitered to be 10 units in from BOTH original edges,
+  // i.e. at (90, 10) for this L (offset "into" the corner, y-down canvas).
+  const corner = res.points[1];
+  near(corner.x, 90);
+  near(corner.y, 10);
+});
+
+check('sketch: offsetChain rejects a branching (non-chain) selection', () => {
+  const s = new Sketch();
+  const center = s.addPoint(0, 0);
+  const a = s.addPoint(100, 0);
+  const b = s.addPoint(0, 100);
+  const c = s.addPoint(-100, 0);
+  const l1 = s.addLine(center.id, a.id);
+  const l2 = s.addLine(center.id, b.id);
+  const l3 = s.addLine(center.id, c.id);
+  assert.equal(s.offsetChain([l1.id, l2.id, l3.id], 10), null);
+});
+
 check('sketch: removeEntity garbage-collects points and constraints', () => {
   const s = new Sketch();
   const { lines } = s.addChain([{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }], false);

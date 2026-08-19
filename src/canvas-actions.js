@@ -19,7 +19,7 @@ import { suspend as historySuspend } from './history.js';
 import { appendToOutput } from './output.js';
 import {
   cadApiSketchChain, cadApiSketchCircle, cadApiSketchArc, cadApiConstrain, cadApiDimension,
-  cadApiSetParam, cadApiDelete, cadApiSummary,
+  cadApiSetParam, cadApiDelete, cadApiSummary, cadApiOffset,
 } from './cad/cad-mode.js';
 
 const STROKE = 'black';
@@ -938,6 +938,10 @@ export async function executeAction(name, args = {}) {
     }
     case 'cad_delete': {
       const res = cadApiDelete(args.ids);
+      return res.error ? { ok: false, message: res.error } : { ...res, ...cadStatusOf() };
+    }
+    case 'cad_offset': {
+      const res = cadApiOffset(args.entityIds, num(args.distance, 0));
       return res.error ? { ok: false, message: res.error } : { ...res, ...cadStatusOf() };
     }
 
